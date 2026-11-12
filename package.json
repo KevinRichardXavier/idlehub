@@ -1,0 +1,47 @@
+{
+  "name": "idlehub",
+  "productName": "IdleHub",
+  "version": "0.1.0",
+  "description": "Painéis multi-conta para jogos idle de navegador, com alertas e resumos no Discord.",
+  "main": "src/main.js",
+  "private": true,
+  "author": "IdleHub",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test \"test/**/*.test.js\"",
+    "dist": "electron-builder --win --publish never",
+    "release": "electron-builder --win --publish always"
+  },
+  "build": {
+    "appId": "com.idlehub.app",
+    "productName": "IdleHub",
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "artifactName": "IdleHub-Setup-${version}.${ext}"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "KevinRichardXavier",
+      "repo": "idlehub",
+      "releaseType": "release"
+    }
+  },
+  "devDependencies": {
+    "electron": "^45.3.1",
+    "electron-builder": "^26.18.0"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.11"
+  }
+}

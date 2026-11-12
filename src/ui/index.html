@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+    />
+    <title>IdleHub</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header id="topbar">
+      <div id="brand">IdleHub</div>
+      <nav id="tabs"></nav>
+      <div id="top-actions">
+        <button id="btn-settings" class="icon-btn" title="Configurações">⚙</button>
+        <button id="btn-feed" class="icon-btn" title="Mostrar/ocultar eventos">☰</button>
+      </div>
+    </header>
+    <div id="update-banner" hidden></div>
+    <div id="banner" hidden></div>
+    <main id="workspace">
+      <section id="grid"></section>
+      <aside id="feed">
+        <div id="feed-head">
+          <strong>Eventos</strong>
+          <button id="btn-clear" class="link-btn" title="Limpar lista">limpar</button>
+        </div>
+        <ul id="feed-list"></ul>
+      </aside>
+    </main>
+    <div id="modal-root"></div>
+    <script src="app.js"></script>
+  </body>
+</html>
