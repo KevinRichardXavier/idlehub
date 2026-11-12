@@ -1,3 +1,18 @@
-node_modules/
-dist/
+# Lista de permissão: ignora TUDO e libera só o que é do IdleHub.
+# Para versionar um arquivo/pasta novo, adicione uma linha "!caminho" abaixo.
+/*
+
+!/.gitignore
+!/README.md
+!/package.json
+!/package-lock.json
+!/src/
+!/test/
+
+# Mesmo dentro das pastas liberadas, nunca versionar:
+.env
+.env.*
 *.log
+*.local.json
+config.json
+events.json
