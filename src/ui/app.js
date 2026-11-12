@@ -8,6 +8,7 @@ const state = {
   events: [],
   runtime: {},
   plugins: [],
+  extensions: [],
   maximized: null, // panelId expandido na aba ativa
   modalOpen: false,
   unread: new Set(), // abas com evento novo não visto
@@ -357,6 +358,20 @@ function openSettings() {
       return `<h3>${esc(p.name)} — drops raros avisados</h3>${items}`;
     })
     .join('');
+  const extStatus = (e) =>
+    e.error
+      ? `<small class="erro">${esc(e.error)}</small>`
+      : e.pending
+        ? '<small>baixando…</small>'
+        : `<small>v${esc(e.version)}${e.updatedTo ? ` (v${esc(e.updatedTo)} baixada, entra ao reiniciar)` : ''}</small>`;
+  const extSection = state.extensions.length
+    ? `<h3>Extensões do Chrome</h3>${state.extensions
+        .map(
+          (e) => `<label class="check"><input type="checkbox" data-ext="${esc(e.id)}" ${c.extensions?.[e.id] ? 'checked' : ''}>
+            ${esc(e.name)} ${extStatus(e)}</label>`,
+        )
+        .join('')}<p class="hint">Baixadas e atualizadas automaticamente pela Chrome Web Store. Ligar ou desligar recarrega os painéis.</p>`
+    : '';
   const options = Object.entries(SUMMARY_LABELS)
     .map(([v, l]) => `<option value="${v}" ${Number(v) === d.summaryMinutes ? 'selected' : ''}>${l}</option>`)
     .join('');
@@ -374,6 +389,7 @@ function openSettings() {
      <label>Resumo automático</label>
      <select id="s-interval">${options}</select>
      ${pluginSections}
+     ${extSection}
      <div class="actions"><button class="btn" data-cancel>Cancelar</button><button class="btn primary" id="s-save">Salvar</button></div>`,
     (modal) => {
       const msg = $('#s-msg', modal);
@@ -399,12 +415,14 @@ function openSettings() {
           return;
         }
         const checks = [...modal.querySelectorAll('[data-plugin]')];
+        const extChecks = [...modal.querySelectorAll('[data-ext]')];
         await commit((cfg) => {
           cfg.discord.webhookUrl = url;
           cfg.discord.notifyShiny = $('#s-shiny', modal).checked;
           cfg.discord.notifyDrops = $('#s-drops', modal).checked;
           cfg.discord.summaryMinutes = Number($('#s-interval', modal).value);
           for (const ch of checks) cfg.plugins[ch.dataset.plugin].rareItems[ch.dataset.item] = ch.checked;
+          for (const ch of extChecks) cfg.extensions[ch.dataset.ext] = ch.checked;
         });
         closeModal();
       };
@@ -524,11 +542,21 @@ hub.onUpdateReady(({ version }) => {
   scheduleLayout();
 });
 
+hub.onExtensions((list) => {
+  state.extensions = list;
+});
+
 // ---------- início ----------
 
 (async () => {
   const s = await hub.getState();
-  Object.assign(state, { config: s.config, events: s.events, runtime: s.runtime, plugins: s.plugins });
+  Object.assign(state, {
+    config: s.config,
+    events: s.events,
+    runtime: s.runtime,
+    plugins: s.plugins,
+    extensions: s.extensions || [],
+  });
   render();
   $('#brand').title = `IdleHub v${await hub.version()}`;
 })();

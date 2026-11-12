@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const { CATALOG } = require('./extensions');
 
 const PANELS_PER_TAB = 4;
 const SUMMARY_OPTIONS = [0, 15, 30, 60, 120, 360, 720];
@@ -54,6 +55,7 @@ function defaultConfig(pluginsMeta) {
     feedOpen: true,
     discord: { webhookUrl: '', notifyShiny: true, notifyDrops: true, summaryMinutes: 60 },
     plugins: defaultPluginSettings(pluginsMeta),
+    extensions: Object.fromEntries(CATALOG.map((e) => [e.id, e.defaultOn])),
   };
 }
 
@@ -108,6 +110,11 @@ function normalizeConfig(raw, pluginsMeta) {
         if (typeof items[key] === 'boolean') settings.rareItems[key] = items[key];
   }
 
+  const rawExt = raw.extensions && typeof raw.extensions === 'object' ? raw.extensions : {};
+  const extensions = Object.fromEntries(
+    Object.entries(def.extensions).map(([id, on]) => [id, typeof rawExt[id] === 'boolean' ? rawExt[id] : on]),
+  );
+
   return {
     version: 1,
     tabs,
@@ -120,6 +127,7 @@ function normalizeConfig(raw, pluginsMeta) {
       summaryMinutes,
     },
     plugins,
+    extensions,
   };
 }
 

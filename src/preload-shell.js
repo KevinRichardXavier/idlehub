@@ -22,4 +22,5 @@ contextBridge.exposeInMainWorld('hub', {
   version: () => ipcRenderer.invoke('app:version'),
   installUpdate: () => ipcRenderer.send('update:install'),
   onUpdateReady: on('update:ready'),
+  onExtensions: on('extensions:update'),
 });

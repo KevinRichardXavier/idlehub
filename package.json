@@ -1,7 +1,7 @@
 {
   "name": "idlehub",
   "productName": "IdleHub",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Painéis multi-conta para jogos idle de navegador, com alertas e resumos no Discord.",
   "main": "src/main.js",
   "private": true,

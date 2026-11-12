@@ -28,6 +28,15 @@ As telas escondidas continuam rodando normalmente.
 - O app só **lê** as mensagens que o servidor já envia ao jogo. Nada é enviado e a jogabilidade não muda.
 - ⚠️ Os termos do Pokeidle permitem **no máximo 4 contas por pessoa e aparelho**. Acima disso o banimento é permanente. O app mostra um aviso se houver mais de 4 telas do Pokeidle abertas. Cada amigo deve rodar o app no próprio PC.
 
+## Extensões do Chrome
+
+O app já vem com a extensão [Hunt for PokeIdle](https://chromewebstore.google.com/detail/mhnplloljgchpfpcpbhmcokmnefodjnh), que mostra as melhores hunts por XP/h e ouro/h. Ela pode ser desligada em ⚙ Configurações › Extensões do Chrome.
+
+- Na primeira abertura, o app baixa a extensão direto da Chrome Web Store e confere o SHA-256 informado pela loja. Depois ela fica em cache.
+- A cada abertura, o app consulta a loja em segundo plano. Se houver versão nova, ela é baixada e passa a valer na **próxima** vez que o app abrir.
+- O Electron só suporta parte das APIs de extensão. Extensões que só injetam scripts na página funcionam. Popup, `webRequest`, notificações e outras APIs não funcionam.
+- Para incluir outra extensão, adicione o ID dela ao `CATALOG` em `src/extensions.js`.
+
 ## Adicionar outro jogo
 
 1. Crie `src/plugins/<jogo>.js` seguindo `pokeidle.js`: `id`, `name`, `hosts`, `defaultUrl`, `rareItems`, `special` e `detect(mensagem, special)`.
@@ -38,4 +47,4 @@ Sites sem plugin também funcionam nas telas, só que sem detecção de eventos.
 
 ## Onde ficam os dados
 
-`%APPDATA%\idlehub\`: `config.json` (abas, telas e configurações), `events.json` (últimos 300 eventos) e `Partitions\` (sessões e logins de cada tela).
+`%APPDATA%\idlehub\`: `config.json` (abas, telas e configurações), `events.json` (últimos 300 eventos), `Partitions\` (sessões e logins de cada tela) e `extensions\` (extensões baixadas da Chrome Web Store).

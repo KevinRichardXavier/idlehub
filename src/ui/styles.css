@@ -196,6 +196,7 @@ body.feed-closed #feed { display: none; }
 }
 .modal .check { display: flex; align-items: center; gap: 8px; color: var(--text); margin: 4px 0; }
 .modal .check small { color: var(--muted); }
+.modal .check small.erro { color: var(--bad); }
 .modal .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .modal .hint { color: var(--muted); font-size: 12px; margin: 4px 0; }
 .modal .msg { font-size: 12px; min-height: 16px; margin-top: 6px; }

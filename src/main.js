@@ -8,6 +8,7 @@ const { normalizeConfig, isWebhookUrl, newId } = require('./config');
 const discord = require('./discord');
 const { SummaryTracker } = require('./summary');
 const { startUpdater } = require('./updater');
+const extensions = require('./extensions');
 
 const MAX_EVENTS = 300;
 
@@ -21,6 +22,10 @@ const runtime = new Map(); // panelId -> { nick, lastSeen }
 const tracker = new SummaryTracker();
 const queue = new discord.DiscordQueue();
 let lastSummaryAt = Date.now();
+let extStore = null;
+const extReady = new Map(); // id da Web Store -> Promise<{ version, path } | null>
+const extStatus = new Map(); // id da Web Store -> { version, updatedTo, error }
+const extLoaded = new WeakMap(); // session -> Map(id da Web Store -> id carregado no Electron)
 
 // ---------- helpers ----------
 
@@ -49,6 +54,74 @@ function sendRuntime(panelId) {
 // (login Google, Cloudflare) recusam esse UA. Removemos só esse sufixo.
 function cleanUserAgent(ua) {
   return ua.replace(/\s(?:Electron|idlehub|IdleHub)\/\S+/g, '');
+}
+
+// ---------- extensões do Chrome ----------
+
+function prepareExtensions() {
+  extStore = new extensions.ExtensionStore(path.join(app.getPath('userData'), 'extensions'), {
+    chromeVersion: process.versions.chrome,
+  });
+  for (const ext of extensions.CATALOG) {
+    const p = extStore
+      .prepare(ext.id, (v) => {
+        extStatus.set(ext.id, { ...extStatus.get(ext.id), updatedTo: v.version });
+        send('extensions:update', extensionsState());
+      })
+      .then((v) => {
+        extStatus.set(ext.id, v ? { version: v.version } : { error: 'Não foi possível baixar a extensão.' });
+        send('extensions:update', extensionsState());
+        return v;
+      });
+    extReady.set(ext.id, p);
+  }
+}
+
+function extensionsState() {
+  return extensions.catalogMeta().map((e) => ({ ...e, ...(extStatus.get(e.id) || { pending: true }) }));
+}
+
+// Deixa a sessão com exatamente as extensões ligadas na configuração. Retorna true se mudou algo.
+async function syncSessionExtensions(ses) {
+  const api = ses.extensions || ses;
+  let loaded = extLoaded.get(ses);
+  if (!loaded) extLoaded.set(ses, (loaded = new Map()));
+  let changed = false;
+  for (const ext of extensions.CATALOG) {
+    const want = !!config.extensions[ext.id];
+    if (want && !loaded.has(ext.id)) {
+      const info = await extReady.get(ext.id);
+      if (!info || !config.extensions[ext.id] || loaded.has(ext.id)) continue;
+      loaded.set(ext.id, null); // reserva: evita carregar duas vezes se outra chamada correr junto
+      try {
+        const e = await api.loadExtension(info.path);
+        loaded.set(ext.id, e.id);
+        changed = true;
+      } catch (err) {
+        loaded.delete(ext.id);
+        console.error(`[extensões] falha ao carregar ${ext.name}: ${err.message}`);
+        extStatus.set(ext.id, { ...extStatus.get(ext.id), error: `Falha ao carregar: ${err.message}` });
+      }
+    } else if (!want && loaded.get(ext.id)) {
+      try {
+        api.removeExtension(loaded.get(ext.id));
+      } catch {
+        /* já removida */
+      }
+      loaded.delete(ext.id);
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+// Liga/desliga extensões nos painéis abertos e recarrega só os que mudaram.
+async function applyExtensionSettings() {
+  for (const v of views.values()) {
+    const wc = v.view.webContents;
+    if (wc.isDestroyed()) continue;
+    if (await syncSessionExtensions(wc.session)) wc.reload();
+  }
 }
 
 // ---------- telas de jogo ----------
@@ -99,7 +172,8 @@ function createView(panel) {
   if (process.env.IDLEHUB_DEBUG) {
     wc.on('did-finish-load', async () => {
       const hooked = await wc.executeJavaScript('!!window.__idleHubHook').catch(() => 'erro');
-      console.log(`[debug] painel ${panel.name} carregou ${wc.getURL()} | observador instalado: ${hooked}`);
+      const hunt = await wc.executeJavaScript('!!window.__pokeidleHunt').catch(() => 'erro');
+      console.log(`[debug] painel ${panel.name} carregou ${wc.getURL()} | observador: ${hooked} | Hunt for PokeIdle: ${hunt}`);
     });
     wc.on('did-fail-load', (_e, code, desc, url, isMainFrame) => {
       if (isMainFrame) console.log(`[debug] painel ${panel.name} falhou ${code} ${desc} ${url}`);
@@ -108,7 +182,12 @@ function createView(panel) {
 
   view.setVisible(false);
   win.contentView.addChildView(view);
-  wc.loadURL(panel.url).catch(() => {});
+  // A extensão precisa estar carregada antes da página, para os content scripts entrarem já no início.
+  syncSessionExtensions(wc.session)
+    .catch(() => {})
+    .finally(() => {
+      if (!wc.isDestroyed()) wc.loadURL(panel.url).catch(() => {});
+    });
   return view;
 }
 
@@ -315,12 +394,15 @@ function registerIpc() {
     events,
     runtime: Object.fromEntries(runtime),
     plugins: plugins.meta(),
+    extensions: extensionsState(),
   }));
 
   ipcMain.handle('config:set', (_e, next) => {
+    const prevExt = JSON.stringify(config.extensions);
     config = normalizeConfig(next, plugins.meta());
     configFile.write(config);
     syncViews();
+    if (JSON.stringify(config.extensions) !== prevExt) applyExtensionSettings().catch(() => {});
     return config;
   });
 
@@ -379,6 +461,7 @@ if (!app.requestSingleInstanceLock()) {
     const stored = eventsFile.read([]);
     events = Array.isArray(stored) ? stored.slice(0, MAX_EVENTS) : [];
 
+    prepareExtensions();
     registerIpc();
     createWindow();
     setInterval(checkSummaryTimer, 30000);
