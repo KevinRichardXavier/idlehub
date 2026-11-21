@@ -13,7 +13,7 @@ npm start
 
 Testes: `npm test`. O CI (GitHub Actions, `.github/workflows/ci.yml`) roda `npm ci` e `npm test` em Windows e Linux a cada push na `main` e em cada pull request, com o Node da versão em `.nvmrc`. Log de diagnóstico: rode com `IDLEHUB_DEBUG=1` (o F12 abre o DevTools da interface).
 
-**Teste de fumaça**: `npm run fumaca` (ou `idlehub --teste-fumaca` no app instalado) abre a janela principal com dados numa pasta temporária, sem nenhuma tela de jogo e com a rede bloqueada, confere que a interface montou e fecha sozinho. Imprime `IDLEHUB_FUMACA_OK` e sai com código 0 se passou; `IDLEHUB_FUMACA_FALHOU` e código 1 se não. Ele não envia nada ao Discord e reprova se o sandbox do Chromium estiver desligado ou se a janela principal não estiver em sandbox com `contextIsolation` (as telas de jogo, que usam `sandbox: false`, não são abertas). O CI roda esse teste no Ubuntu 24.04 sob tela virtual (`xvfb-run`), do código e do `.deb` instalado, e guarda uma captura da janela como artefato `fumaca-linux`.
+**Teste de fumaça**: `npm run fumaca` (ou `idlehub --teste-fumaca` no app instalado) abre a janela principal com dados numa pasta temporária e com a rede bloqueada, confere que a interface montou, abre **uma** tela de jogo apontada para uma página local de teste (`idlehub-fumaca://`, que só existe nesse modo; nenhum jogo é aberto) e fecha sozinho. Imprime `IDLEHUB_FUMACA_OK` e sai com código 0 se passou; `IDLEHUB_FUMACA_FALHOU` e código 1 se não. Ele não envia nada ao Discord e reprova se o sandbox do Chromium estiver desligado, se a janela principal ou a tela de jogo não estiverem em sandbox com `contextIsolation`, se a página da tela enxergar `require`/`process`, ou se o preload da tela não tiver resolvido o plugin, instalado o observador na página e entregado um evento da página ao processo principal. O CI roda esse teste no Ubuntu 24.04 sob tela virtual (`xvfb-run`), do código e do `.deb` instalado, e guarda uma captura da janela como artefato `fumaca-linux`.
 
 ### Linux
 
@@ -66,6 +66,8 @@ O app já vem com a extensão [Hunt for PokeIdle](https://chromewebstore.google.
 1. Crie `src/plugins/<jogo>.js` seguindo `pokeidle.js`: `id`, `name`, `hosts`, `defaultUrl`, `rareItems`, `special` e `detect(mensagem, special)`.
 2. `detect` recebe cada mensagem JSON do WebSocket do jogo e devolve eventos `{ type: 'shiny' | 'drop' | 'account', ... }`. Ela roda **dentro da página**, então não pode usar nada fora dos próprios parâmetros.
 3. Registre o plugin em `src/plugins/index.js` e escreva testes em `test/`.
+
+As telas de jogo rodam com `sandbox: true`, `contextIsolation` ligado e `nodeIntegration` desligado (`src/panel-prefs.js`). Num preload em sandbox o `require` só conhece o `electron`, então o preload das telas (`src/preload-panel.js`) e tudo o que ele carrega (registro, plugins e observador) é montado num arquivo só, `src/gerado/preload-panel.js`, por `scripts/montar-preload.js`. Isso roda sozinho antes de `npm start`, `npm test`, `npm run fumaca`, `npm run dist`, `npm run dist:linux` e `npm run release` (ou à mão: `npm run montar`). O arquivo gerado não é versionado e o `npm test` reprova se ele estiver diferente do que as fontes geram. Por isso, num plugin ou no preload: só `require('./caminho-fixo')` de arquivos de `src/` ou `require('electron')`; a montagem recusa qualquer outro módulo (`fs`, `path`...) e `require` com nome variável.
 
 Sites sem plugin também funcionam nas telas, só que sem detecção de eventos.
 
