@@ -287,13 +287,14 @@ ao abrir em vez de rodar sem proteção. As saídas possíveis:
 4. **`--no-sandbox`.** Tira o sandbox de todos os processos do app: janela principal, popups de login
    (Discord, Google) e processos auxiliares do Chromium. Não.
 
-**Alcance do sandbox, para não haver surpresa:** a janela principal e os popups de login rodam em sandbox,
-e o teste de fumaça exige isso. Já as **telas de jogo** rodam sem o sandbox do sistema (`sandbox: false` em
-`src/main.js`, porque o preload delas carrega os plugins com `require`). Isso já era assim antes do modo
-Linux, vale igual no Windows e não muda com este guia. Elas continuam com `contextIsolation` ligado e
-`nodeIntegration` desligado, e o teste de fumaça não as abre. Por isso o usuário dedicado do passo 2 importa:
-se uma página de jogo ou a extensão escapar do Chromium, ela fica restrita ao usuário `idlehub` e não alcança
-seus arquivos nem o projeto do cliente.
+**Alcance do sandbox, para não haver surpresa:** a janela principal, os popups de login e as **telas de
+jogo** rodam em sandbox, com `contextIsolation` ligado e `nodeIntegration` desligado, igual no Windows e no
+Linux. O teste de fumaça exige isso: além da janela principal, ele abre uma tela de jogo com uma página local
+de teste e reprova se ela não estiver em sandbox. (Até a versão 0.2.0 as telas de jogo rodavam com
+`sandbox: false`, porque o preload delas carregava os plugins com `require`; agora o preload é montado num
+arquivo só, veja o README.) O usuário dedicado do passo 2 continua importando como segunda barreira: se uma
+página de jogo ou a extensão escapar do Chromium, ela fica restrita ao usuário `idlehub` e não alcança seus
+arquivos nem o projeto do cliente.
 
 Por que o servidor usa o `.deb`, e não `npm start` direto do código: o binário do Electron ficaria em
 `node_modules`, numa pasta que o próprio usuário pode alterar, e o perfil liberaria `userns` para qualquer

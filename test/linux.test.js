@@ -47,9 +47,38 @@ test('fumaça: configuração sem nenhum endereço de jogo, sem mexer na origina
   assert.deepEqual(normalizeConfig(off, plugins.meta()).tabs, off.tabs);
 });
 
+test('fumaça: só a primeira tela recebe a página local de teste', () => {
+  const plugin = plugins.PLUGINS[0];
+  const url = smoke.testPageUrl(plugin);
+  assert.equal(url, `idlehub-fumaca://${plugin.hosts[0]}/tela-de-teste`);
+  // O preload resolve o plugin pelo host, como no jogo de verdade; o esquema não é de rede.
+  assert.equal(plugins.pluginForUrl(url), plugin);
+  assert.doesNotMatch(url, /^(https?|wss?):/);
+
+  const c = normalizeConfig(null, plugins.meta());
+  const off = smoke.offlineConfig(c, url);
+  const urls = off.tabs.flatMap((t) => t.panels.map((p) => p.url));
+  assert.deepEqual(urls, [url, ...Array(urls.length - 1).fill('')]);
+  assert.ok(c.tabs[0].panels.every((p) => /^https:/.test(p.url)), 'não altera a configuração recebida');
+});
+
+test('fumaça: página de teste local, sem nada de fora', () => {
+  const html = smoke.testPageHtml(plugins.PLUGINS[0]);
+  assert.doesNotMatch(html, /https?:|wss?:|src=|href=/, 'nenhum recurso externo');
+  assert.ok(html.includes(JSON.stringify(plugins.PLUGINS[0].id)));
+  assert.ok(html.includes(smoke.TEST_NICK));
+});
+
+// Tela de jogo de teste que passou: preload em sandbox, plugin resolvido, observador na página e IPC ok.
+const PANEL_OK = {
+  ready: { pluginId: 'pokeidle', sandboxed: true, contextIsolated: true },
+  page: { hook: true, node: false },
+  nick: smoke.TEST_NICK,
+};
+
 test('fumaça: veredito', () => {
   const ui = { tabs: 1, panels: 4, sandboxed: true, contextIsolated: true, node: false };
-  const base = { ui, expectedPanels: 4, visible: true, blocked: [], sandboxOff: false };
+  const base = { ui, expectedPanels: 4, visible: true, blocked: [], sandboxOff: false, panel: PANEL_OK, expectedPlugin: 'pokeidle' };
   assert.deepEqual(smoke.verdict(base), { ok: true, problems: [] });
 
   const semUi = smoke.verdict({ ...base, ui: null });
@@ -68,6 +97,25 @@ test('fumaça: veredito', () => {
   const rede = smoke.verdict({ ...base, blocked: ['https://pokeidle.io'] });
   assert.equal(rede.ok, false);
   assert.match(rede.problems[0], /pokeidle\.io/);
+});
+
+test('fumaça: veredito reprova tela de jogo fora do sandbox (ex.: alguém voltou sandbox: false)', () => {
+  const ui = { tabs: 1, panels: 4, sandboxed: true, contextIsolated: true, node: false };
+  const base = { ui, expectedPanels: 4, visible: true, blocked: [], sandboxOff: false, expectedPlugin: 'pokeidle' };
+  const check = (panel, re) => {
+    const v = smoke.verdict({ ...base, panel });
+    assert.equal(v.ok, false);
+    assert.ok(v.problems.some((p) => re.test(p)), `${re} em ${JSON.stringify(v.problems)}`);
+  };
+  check({ ...PANEL_OK, ready: { ...PANEL_OK.ready, sandboxed: false } }, /tela de jogo não está em sandbox/);
+  check({ ...PANEL_OK, ready: { ...PANEL_OK.ready, contextIsolated: false } }, /tela de jogo não está com contextIsolation/);
+  check({ ...PANEL_OK, ready: { ...PANEL_OK.ready, pluginId: null } }, /resolveu o plugin null/);
+  check({ ...PANEL_OK, ready: null }, /preload da tela de jogo não rodou/);
+  check({ ...PANEL_OK, page: null }, /observador do plugin não entrou/);
+  check({ ...PANEL_OK, page: { hook: true, node: true } }, /enxerga require\/process/);
+  check({ ...PANEL_OK, nick: null }, /não chegou ao processo principal/);
+  check(null, /tela de jogo de teste não abriu/);
+  assert.deepEqual(smoke.panelProblems(PANEL_OK, 'pokeidle'), []);
 });
 
 // URL fictícia com o formato de um webhook; o "segredo" é inventado.
@@ -99,7 +147,7 @@ test('fumaça: Discord desligado, sem chamar fetch e sem expor o webhook', async
   }
   assert.equal(ctx.blocked.length, 1, 'a tentativa reprova o teste');
   assert.ok(!ctx.blocked[0].includes('SEGREDO'));
-  assert.equal(smoke.verdict({ ui: { tabs: 1, panels: 4, sandboxed: true, contextIsolated: true, node: false }, expectedPanels: 4, visible: true, blocked: ctx.blocked, sandboxOff: false }).ok, false);
+  assert.equal(smoke.verdict({ ui: { tabs: 1, panels: 4, sandboxed: true, contextIsolated: true, node: false }, expectedPanels: 4, visible: true, blocked: ctx.blocked, sandboxOff: false, panel: PANEL_OK, expectedPlugin: 'pokeidle' }).ok, false);
 });
 
 test('fumaça: configuração sem webhook', () => {

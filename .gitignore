@@ -20,3 +20,5 @@
 *.local.json
 config.json
 events.json
+# Gerado por scripts/montar-preload.js (roda sozinho antes de start, test, fumaca e dist).
+/src/gerado/

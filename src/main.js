@@ -10,6 +10,7 @@ const { SummaryTracker } = require('./summary');
 const { startUpdater } = require('./updater');
 const extensions = require('./extensions');
 const smokeTest = require('./smoke-test');
+const { panelWebPreferences } = require('./panel-prefs');
 
 const MAX_EVENTS = 300;
 
@@ -20,11 +21,13 @@ let eventsFile = null;
 let events = [];
 const views = new Map(); // panelId -> { view, url }
 const runtime = new Map(); // panelId -> { nick, lastSeen }
+const panelInfo = new Map(); // panelId -> o que o preload da tela informou: { pluginId, sandboxed, contextIsolated }
 const tracker = new SummaryTracker();
 
-// Teste de fumaça (--teste-fumaca): dados temporários, rede bloqueada e Discord desligado. Precisa vir antes
+// Teste de fumaça (--teste-fumaca): dados temporários, rede bloqueada, Discord desligado e uma tela de jogo
+// apontada para uma página local de teste que o preload resolve como do primeiro plugin. Precisa vir antes
 // da fila do Discord (que guarda o fetch) e da trava de instância única (que usa a pasta de dados).
-const smoke = smokeTest.isSmokeTest(process.argv) ? smokeTest.setup(app) : null;
+const smoke = smokeTest.isSmokeTest(process.argv) ? smokeTest.setup(app, plugins.PLUGINS[0]) : null;
 const queue = smoke ? smokeTest.blockedDiscordQueue(smoke) : new discord.DiscordQueue();
 let lastSummaryAt = Date.now();
 let extStore = null;
@@ -133,17 +136,11 @@ async function applyExtensionSettings() {
 
 function createView(panel) {
   const partition = `persist:panel-${panel.id}`;
-  const view = new WebContentsView({
-    webPreferences: {
-      partition,
-      preload: path.join(__dirname, 'preload-panel.js'),
-      sandbox: false, // o preload precisa de require() para carregar os plugins
-      contextIsolation: true,
-      nodeIntegration: false,
-      backgroundThrottling: false, // jogos idle precisam continuar rodando escondidos
-    },
-  });
+  const view = new WebContentsView({ webPreferences: panelWebPreferences(partition) });
   const wc = view.webContents;
+  wc.on('preload-error', (_e, file, err) => {
+    console.error(`[telas] o preload da tela ${panel.name} falhou (${path.basename(file)}): ${err.message}`);
+  });
   wc.session.setUserAgent(cleanUserAgent(wc.session.getUserAgent()));
 
   wc.setWindowOpenHandler(({ url }) => {
@@ -211,6 +208,7 @@ function destroyView(panelId) {
   }
   views.delete(panelId);
   runtime.delete(panelId);
+  panelInfo.delete(panelId);
 }
 
 // Deixa as telas abertas exatamente iguais ao que está na configuração.
@@ -436,6 +434,18 @@ function registerIpc() {
 
   ipcMain.on('panel:events', (e, data) => handlePanelEvents(e.sender, data));
 
+  ipcMain.on('panel:ready', (e, info) => {
+    const panelId = panelIdForSender(e.sender);
+    if (!panelId || !info || typeof info !== 'object') return;
+    const clean = {
+      pluginId: typeof info.pluginId === 'string' ? info.pluginId : null,
+      sandboxed: info.sandboxed === true,
+      contextIsolated: info.contextIsolated === true,
+    };
+    panelInfo.set(panelId, clean);
+    if (process.env.IDLEHUB_DEBUG) console.log(`[debug] preload da tela ${findPanel(panelId)?.name}:`, JSON.stringify(clean));
+  });
+
   ipcMain.handle('app:version', () => app.getVersion());
   ipcMain.on('update:install', () => {
     configFile.flush();
@@ -462,7 +472,7 @@ if (!app.requestSingleInstanceLock()) {
     configFile = new JsonFile(path.join(dir, 'config.json'));
     eventsFile = new JsonFile(path.join(dir, 'events.json'), 1500);
     config = normalizeConfig(configFile.read(null), plugins.meta());
-    if (smoke) config = smokeTest.offlineConfig(config);
+    if (smoke) config = smokeTest.offlineConfig(config, smoke.testUrl);
     configFile.writeNow(config);
     const stored = eventsFile.read([]);
     events = Array.isArray(stored) ? stored.slice(0, MAX_EVENTS) : [];
@@ -471,7 +481,18 @@ if (!app.requestSingleInstanceLock()) {
     registerIpc();
     createWindow();
     if (smoke) {
-      smokeTest.run({ app, win, ctx: smoke, expectedPanels: PANELS_PER_TAB });
+      const testPanelId = config.tabs[0].panels[0].id;
+      smokeTest.run({
+        app,
+        win,
+        ctx: smoke,
+        expectedPanels: PANELS_PER_TAB,
+        testPanel: () => {
+          const v = views.get(testPanelId);
+          if (!v) return null;
+          return { wc: v.view.webContents, ready: panelInfo.get(testPanelId) || null, nick: runtime.get(testPanelId)?.nick ?? null };
+        },
+      });
       return;
     }
     setInterval(checkSummaryTimer, 30000);
