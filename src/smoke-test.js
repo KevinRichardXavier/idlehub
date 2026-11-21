@@ -78,6 +78,27 @@ async function readUi(wc) {
     .catch(() => null);
 }
 
+// Captura da janela, só como evidência extra (o CI guarda o PNG). Sob tela virtual o compositor pode
+// demorar a ter o primeiro quadro, então tenta algumas vezes; se não der, avisa e segue.
+async function capture(wc, file) {
+  let last;
+  for (let i = 0; i < 10; i++) {
+    try {
+      const img = await wc.capturePage();
+      if (!img.isEmpty()) {
+        fs.writeFileSync(file, img.toPNG());
+        return 'ok';
+      }
+      last = 'imagem vazia';
+    } catch (err) {
+      last = err.message;
+    }
+    await sleep(500);
+  }
+  console.warn(`[fumaça] não consegui capturar a janela: ${last}`);
+  return `falhou: ${last}`;
+}
+
 async function run({ app, win, ctx, expectedPanels }) {
   const started = Date.now();
   const report = (ok, extra) => {
@@ -108,10 +129,7 @@ async function run({ app, win, ctx, expectedPanels }) {
     }
 
     const shot = process.env.IDLEHUB_FUMACA_CAPTURA;
-    if (shot) {
-      const img = await wc.capturePage();
-      fs.writeFileSync(shot, img.toPNG());
-    }
+    const captura = shot ? await capture(wc, shot) : undefined;
 
     const res = verdict({
       ui,
@@ -123,7 +141,7 @@ async function run({ app, win, ctx, expectedPanels }) {
     clearTimeout(watchdog);
     if (!res.ok) return fail(res.problems);
     done = true;
-    report(true, { ui, plataforma: `${process.platform}-${process.arch}`, electron: process.versions.electron });
+    report(true, { ui, captura, plataforma: `${process.platform}-${process.arch}`, electron: process.versions.electron });
     app.quit(); // caminho normal de saída (before-quit salva os arquivos); código 0
   } catch (err) {
     clearTimeout(watchdog);
