@@ -13,6 +13,18 @@ const { normalizeConfig } = require('../src/config');
 
 const ID = 'mhnplloljgchpfpcpbhmcokmnefodjnh';
 
+// Pastas temporárias criadas pelos testes deste arquivo. O after() roda no fim do arquivo mesmo quando
+// algum teste falha, então nada fica para trás em os.tmpdir().
+const tmpDirs = [];
+function makeTmpDir() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'idlehub-ext-'));
+  tmpDirs.push(dir);
+  return dir;
+}
+test.after(() => {
+  for (const dir of tmpDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+});
+
 // Monta um .zip mínimo (deflate) e embrulha num .crx3.
 function makeZip(entries) {
   const locals = [];
@@ -73,7 +85,7 @@ function fakeStore(crxByVersion, { version, hash } = {}) {
     const crx = crxByVersion[v];
     return { ok: true, arrayBuffer: async () => crx.buffer.slice(crx.byteOffset, crx.byteOffset + crx.length) };
   };
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'idlehub-ext-'));
+  const dir = makeTmpDir();
   return { store: new ext.ExtensionStore(dir, { fetchImpl }), dir, calls };
 }
 
