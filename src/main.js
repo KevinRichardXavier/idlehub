@@ -4,11 +4,12 @@ const { app, BrowserWindow, WebContentsView, ipcMain, Menu, shell } = require('e
 const path = require('node:path');
 const plugins = require('./plugins');
 const { JsonFile } = require('./jsonfile');
-const { normalizeConfig, isWebhookUrl, newId } = require('./config');
+const { normalizeConfig, isWebhookUrl, newId, PANELS_PER_TAB } = require('./config');
 const discord = require('./discord');
 const { SummaryTracker } = require('./summary');
 const { startUpdater } = require('./updater');
 const extensions = require('./extensions');
+const smokeTest = require('./smoke-test');
 
 const MAX_EVENTS = 300;
 
@@ -441,6 +442,10 @@ function registerIpc() {
 
 let updater = { install: () => {} };
 
+// Teste de fumaça (--teste-fumaca): dados temporários e rede bloqueada. Precisa vir antes da trava de
+// instância única, que usa a pasta de dados.
+const smoke = smokeTest.isSmokeTest(process.argv) ? smokeTest.setup(app) : null;
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -457,13 +462,18 @@ if (!app.requestSingleInstanceLock()) {
     configFile = new JsonFile(path.join(dir, 'config.json'));
     eventsFile = new JsonFile(path.join(dir, 'events.json'), 1500);
     config = normalizeConfig(configFile.read(null), plugins.meta());
+    if (smoke) config = smokeTest.offlineConfig(config);
     configFile.writeNow(config);
     const stored = eventsFile.read([]);
     events = Array.isArray(stored) ? stored.slice(0, MAX_EVENTS) : [];
 
-    prepareExtensions();
+    if (!smoke) prepareExtensions(); // no teste de fumaça, nada de Chrome Web Store
     registerIpc();
     createWindow();
+    if (smoke) {
+      smokeTest.run({ app, win, ctx: smoke, expectedPanels: PANELS_PER_TAB });
+      return;
+    }
     setInterval(checkSummaryTimer, 30000);
     updater = startUpdater(send);
   });
