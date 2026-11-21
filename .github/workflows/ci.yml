@@ -83,13 +83,27 @@ jobs:
 
       - name: Sem o perfil AppArmor o sandbox não sobe (prova de que a restrição vale)
         run: |
-          if timeout 90 xvfb-run -a npm run fumaca > "$RUNNER_TEMP/sem-perfil.log" 2>&1; then
-            cat "$RUNNER_TEMP/sem-perfil.log"
+          rc=0
+          timeout 90 xvfb-run -a npm run fumaca > "$RUNNER_TEMP/sem-perfil.log" 2>&1 || rc=$?
+          cat "$RUNNER_TEMP/sem-perfil.log"
+          if [ "$rc" -eq 0 ]; then
             echo "::error::O app abriu sem o perfil AppArmor: a restrição não está valendo aqui e os testes abaixo não provariam nada."
             exit 1
           fi
-          grep -i 'sandbox' "$RUNNER_TEMP/sem-perfil.log"
-          echo "Falhou por causa do sandbox, como esperado."
+          if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+            echo "::error::Tempo esgotado (código $rc): não dá para saber se a falha foi do sandbox."
+            exit 1
+          fi
+          # Só vale a falha específica do sandbox do Chromium, não qualquer outra.
+          if ! grep -E 'FATAL:.*setuid_sandbox_host\.cc.*The SUID sandbox helper binary was found, but is not configured correctly' "$RUNNER_TEMP/sem-perfil.log"; then
+            echo "::error::O app falhou (código $rc), mas não com o erro de sandbox esperado."
+            exit 1
+          fi
+          if grep -q '^IDLEHUB_FUMACA_OK ' "$RUNNER_TEMP/sem-perfil.log"; then
+            echo "::error::O teste de fumaça passou sem o perfil."
+            exit 1
+          fi
+          echo "Falhou com o erro de sandbox do Chromium (código $rc), como esperado."
 
       - name: Carregar o perfil AppArmor do Electron de node_modules
         run: |
