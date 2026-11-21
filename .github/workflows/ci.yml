@@ -48,7 +48,9 @@ jobs:
   # Prova de que o app abre em Linux: sobe a janela principal sob tela virtual
   # (xvfb-run) com o sandbox do Chromium ligado, sem abrir nenhum jogo nem a
   # Chrome Web Store (modo --teste-fumaca: dados temporários e rede bloqueada),
-  # e confere que o processo encerra limpo. Roda no Ubuntu 24.04, o mesmo do
+  # abre uma tela de jogo em sandbox com uma página local de teste (preload
+  # montado + plugin + observador + IPC) e confere que o processo encerra limpo.
+  # O `npm run fumaca` e o `npm run dist:linux` montam o preload antes (pre*). Roda no Ubuntu 24.04, o mesmo do
   # servidor, com a restrição de user namespaces do AppArmor ligada.
   fumaca-linux:
     name: Teste de fumaça (Linux, tela virtual)
