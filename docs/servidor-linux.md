@@ -192,14 +192,18 @@ systemctl status idlehub idlehub-tela --no-pager
 Com a Tailscale ligada no PC, abra o túnel e deixe essa janela aberta:
 
 ```bash
-ssh -N -L 5901:127.0.0.1:5901 kevin@selfhost-01
+ssh -N -L 127.0.0.1:5901:127.0.0.1:5901 kevin@selfhost-01
 ```
+
+Os dois `127.0.0.1` importam: o da direita é o destino no servidor; o da esquerda faz o túnel escutar só no
+próprio PC. Sem ele, a escuta no PC depende da opção `GatewayPorts` do SSH de lá e poderia aceitar conexões
+de outras máquinas da sua rede.
 
 (`selfhost-01` é o nome do servidor na Tailscale; o IP `100.x.y.z` dele também serve. No Windows, o `ssh`
 já vem no PowerShell.) Depois, num visualizador VNC (TigerVNC Viewer, por exemplo), conecte em
 `localhost:5901` com a senha do passo 4. O VNC trafega dentro do SSH, que trafega dentro da Tailscale:
 nada fica exposto na internet. Se a porta 5901 do PC já estiver em uso, troque o primeiro número
-(`-L 15901:127.0.0.1:5901`) e conecte em `localhost:15901`.
+(`-L 127.0.0.1:15901:127.0.0.1:5901`) e conecte em `localhost:15901`.
 
 Os logins nos jogos você faz por essa tela, como faria no PC. Popups de login (Discord, Google) abrem como
 janelas separadas na mesma tela.
@@ -274,13 +278,22 @@ ao abrir em vez de rodar sem proteção. As saídas possíveis:
 1. **Perfil AppArmor só para o binário do app (a escolhida).** O `.deb` do electron-builder 26 instala em
    `/etc/apparmor.d/idlehub` um perfil que libera só `userns` para `/opt/IdleHub/idlehub`, um caminho de root
    que o usuário `idlehub` não consegue trocar. É o mesmo formato que a documentação do Chromium recomenda.
-   O CI confere isso a cada PR no Ubuntu 24.04: sem o perfil o app não abre; com ele, abre com o sandbox ligado.
+   O CI confere isso a cada PR no Ubuntu 24.04: sem o perfil o app não abre (com o erro de sandbox do
+   Chromium); com ele, abre e a janela principal informa que está em sandbox.
 2. **`chrome-sandbox` com SUID de root.** Também funciona, mas é o mecanismo antigo, que o próprio Chromium
    considera um pouco mais fraco, e exige um binário setuid a mais no sistema.
 3. **Desligar a restrição (`sysctl kernel.apparmor_restrict_unprivileged_userns=0`).** Tira uma proteção do
    servidor inteiro, que também roda o MausBot e o projeto do cliente. Não.
-4. **`--no-sandbox`.** Tira o sandbox do app, que abre páginas de jogos de terceiros e roda uma extensão de
-   terceiros, justamente o que o sandbox protege. Não.
+4. **`--no-sandbox`.** Tira o sandbox de todos os processos do app: janela principal, popups de login
+   (Discord, Google) e processos auxiliares do Chromium. Não.
+
+**Alcance do sandbox, para não haver surpresa:** a janela principal e os popups de login rodam em sandbox,
+e o teste de fumaça exige isso. Já as **telas de jogo** rodam sem o sandbox do sistema (`sandbox: false` em
+`src/main.js`, porque o preload delas carrega os plugins com `require`). Isso já era assim antes do modo
+Linux, vale igual no Windows e não muda com este guia. Elas continuam com `contextIsolation` ligado e
+`nodeIntegration` desligado, e o teste de fumaça não as abre. Por isso o usuário dedicado do passo 2 importa:
+se uma página de jogo ou a extensão escapar do Chromium, ela fica restrita ao usuário `idlehub` e não alcança
+seus arquivos nem o projeto do cliente.
 
 Por que o servidor usa o `.deb`, e não `npm start` direto do código: o binário do Electron ficaria em
 `node_modules`, numa pasta que o próprio usuário pode alterar, e o perfil liberaria `userns` para qualquer

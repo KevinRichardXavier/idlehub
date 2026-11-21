@@ -13,7 +13,7 @@ npm start
 
 Testes: `npm test`. O CI (GitHub Actions, `.github/workflows/ci.yml`) roda `npm ci` e `npm test` em Windows e Linux a cada push na `main` e em cada pull request, com o Node da versão em `.nvmrc`. Log de diagnóstico: rode com `IDLEHUB_DEBUG=1` (o F12 abre o DevTools da interface).
 
-**Teste de fumaça**: `npm run fumaca` (ou `idlehub --teste-fumaca` no app instalado) abre a janela principal com dados numa pasta temporária, sem nenhuma tela de jogo e com a rede bloqueada, confere que a interface montou e fecha sozinho. Imprime `IDLEHUB_FUMACA_OK` e sai com código 0 se passou; `IDLEHUB_FUMACA_FALHOU` e código 1 se não. Ele recusa rodar com o sandbox do Chromium desligado. O CI roda esse teste no Ubuntu 24.04 sob tela virtual (`xvfb-run`), do código e do `.deb` instalado, e guarda uma captura da janela como artefato `fumaca-linux`.
+**Teste de fumaça**: `npm run fumaca` (ou `idlehub --teste-fumaca` no app instalado) abre a janela principal com dados numa pasta temporária, sem nenhuma tela de jogo e com a rede bloqueada, confere que a interface montou e fecha sozinho. Imprime `IDLEHUB_FUMACA_OK` e sai com código 0 se passou; `IDLEHUB_FUMACA_FALHOU` e código 1 se não. Ele não envia nada ao Discord e reprova se o sandbox do Chromium estiver desligado ou se a janela principal não estiver em sandbox com `contextIsolation` (as telas de jogo, que usam `sandbox: false`, não são abertas). O CI roda esse teste no Ubuntu 24.04 sob tela virtual (`xvfb-run`), do código e do `.deb` instalado, e guarda uma captura da janela como artefato `fumaca-linux`.
 
 ### Linux
 
