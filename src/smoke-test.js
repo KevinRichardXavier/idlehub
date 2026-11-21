@@ -2,9 +2,10 @@
 
 // Teste de fumaça: `idlehub --teste-fumaca` (ou `npm run fumaca`).
 //
-// Abre a janela principal com dados numa pasta temporária, sem nenhuma tela de jogo e com toda a rede
-// bloqueada, confere que a interface montou (abas e telas desenhadas pelo preload + IPC) e encerra o
-// app pelo caminho normal. Código de saída 0 = passou. O CI roda isto em Linux sob tela virtual
+// Abre a janela principal com dados numa pasta temporária, sem nenhuma tela de jogo, com toda a rede
+// bloqueada e o Discord desligado, confere que a interface montou (abas e telas desenhadas pelo
+// preload + IPC) com a janela principal em sandbox e contextIsolation, e encerra o app pelo caminho
+// normal. As telas de jogo (sandbox: false, ver main.js) não são abertas e ficam fora deste teste. Código de saída 0 = passou. O CI roda isto em Linux sob tela virtual
 // (xvfb-run) com o sandbox do Chromium ligado; é a prova de que a janela abre.
 //
 // As funções puras (sem Electron) ficam no topo para dar para testar com `node --test`.
@@ -26,9 +27,33 @@ function sandboxDisabled(argv = process.argv, env = process.env) {
   return argv.includes('--no-sandbox') || !!env.ELECTRON_DISABLE_SANDBOX;
 }
 
-// Mesma configuração, mas sem endereço em nenhuma tela: nenhum jogo é aberto.
+// Mesma configuração, mas sem endereço em nenhuma tela (nenhum jogo é aberto) e sem webhook.
 function offlineConfig(config) {
-  return { ...config, tabs: config.tabs.map((t) => ({ ...t, panels: t.panels.map((p) => ({ ...p, url: '' })) })) };
+  const out = { ...config, tabs: config.tabs.map((t) => ({ ...t, panels: t.panels.map((p) => ({ ...p, url: '' })) })) };
+  if (config.discord) out.discord = { ...config.discord, webhookUrl: '' };
+  return out;
+}
+
+// Para o diagnóstico, só a origem do endereço (esquema + host). O caminho pode conter segredo: a URL de um
+// webhook do Discord leva o token no caminho.
+function redactUrl(url) {
+  try {
+    const u = new URL(String(url?.url || url));
+    return /^(https?|wss?):$/.test(u.protocol) ? u.origin : `${u.protocol}…`;
+  } catch {
+    return '(endereço inválido)';
+  }
+}
+
+// Substitui a fila do Discord no teste de fumaça: nada é enviado, nem pelo botão de teste nem pelo resumo.
+// Qualquer tentativa reprova o teste.
+function blockedDiscordQueue(ctx) {
+  return {
+    send: async (url) => {
+      ctx.blocked.push(`${redactUrl(url)} (envio ao Discord)`);
+      return { ok: false, error: 'Discord desligado no teste de fumaça.' };
+    },
+  };
 }
 
 // Decide se o teste passou. Retorna { ok, problems }.
@@ -38,6 +63,10 @@ function verdict({ ui, expectedPanels, visible, blocked, sandboxOff }) {
   if (!visible) problems.push('a janela principal não está visível');
   if (!ui || !(ui.tabs >= 1)) problems.push('a interface não desenhou nenhuma aba');
   if (!ui || ui.panels !== expectedPanels) problems.push(`esperava ${expectedPanels} telas na aba, achei ${ui ? ui.panels : 0}`);
+  // Estado real do renderer da janela principal, lido pelo preload (não só as opções pedidas).
+  if (!ui || ui.sandboxed !== true) problems.push('a janela principal não está em sandbox (process.sandboxed)');
+  if (!ui || ui.contextIsolated !== true) problems.push('a janela principal não está com contextIsolation (process.contextIsolated)');
+  if (!ui || ui.node !== false) problems.push('a página da janela principal enxerga require/process (nodeIntegration)');
   if (blocked.length) problems.push(`tentou acessar a rede: ${blocked.slice(0, 5).join(', ')}`);
   return { ok: problems.length === 0, problems };
 }
@@ -53,12 +82,12 @@ function setup(app) {
 
   const blocked = [];
   globalThis.fetch = async (url) => {
-    blocked.push(String(url?.url || url));
+    blocked.push(redactUrl(url));
     throw new Error('rede bloqueada no teste de fumaça');
   };
   const guard = (ses) =>
     ses.webRequest.onBeforeRequest({ urls: BLOCKED_URLS }, (details, cb) => {
-      blocked.push(details.url);
+      blocked.push(redactUrl(details.url));
       cb({ cancel: true });
     });
   app.on('session-created', guard);
@@ -73,7 +102,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function readUi(wc) {
   return wc
     .executeJavaScript(
-      `({ tabs: document.querySelectorAll('#tabs .tab').length, panels: document.querySelectorAll('#grid .cell').length })`,
+      `({
+        tabs: document.querySelectorAll('#tabs .tab').length,
+        panels: document.querySelectorAll('#grid .cell').length,
+        sandboxed: window.hub?.rendererInfo?.sandboxed,
+        contextIsolated: window.hub?.rendererInfo?.contextIsolated,
+        node: typeof require !== 'undefined' || typeof process !== 'undefined',
+      })`,
     )
     .catch(() => null);
 }
@@ -124,7 +159,7 @@ async function run({ app, win, ctx, expectedPanels }) {
     let ui = null;
     while (Date.now() - started < TIMEOUT_MS - 5000) {
       ui = await readUi(wc);
-      if (ui && ui.tabs >= 1 && ui.panels === expectedPanels) break;
+      if (ui && ui.tabs >= 1 && ui.panels === expectedPanels && ui.sandboxed !== undefined) break;
       await sleep(POLL_MS);
     }
 
@@ -149,4 +184,4 @@ async function run({ app, win, ctx, expectedPanels }) {
   }
 }
 
-module.exports = { FLAG, isSmokeTest, sandboxDisabled, offlineConfig, verdict, setup, run };
+module.exports = { FLAG, isSmokeTest, sandboxDisabled, offlineConfig, redactUrl, blockedDiscordQueue, verdict, setup, run };

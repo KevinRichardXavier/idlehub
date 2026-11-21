@@ -48,20 +48,67 @@ test('fumaça: configuração sem nenhum endereço de jogo, sem mexer na origina
 });
 
 test('fumaça: veredito', () => {
-  const base = { ui: { tabs: 1, panels: 4 }, expectedPanels: 4, visible: true, blocked: [], sandboxOff: false };
+  const ui = { tabs: 1, panels: 4, sandboxed: true, contextIsolated: true, node: false };
+  const base = { ui, expectedPanels: 4, visible: true, blocked: [], sandboxOff: false };
   assert.deepEqual(smoke.verdict(base), { ok: true, problems: [] });
 
   const semUi = smoke.verdict({ ...base, ui: null });
   assert.equal(semUi.ok, false);
-  assert.equal(semUi.problems.length, 2);
+  assert.equal(semUi.problems.length, 5);
 
-  assert.equal(smoke.verdict({ ...base, ui: { tabs: 1, panels: 3 } }).ok, false);
+  assert.equal(smoke.verdict({ ...base, ui: { ...ui, panels: 3 } }).ok, false);
+  // Estado real do renderer: sandbox e contextIsolation precisam ser true; sem require/process na página.
+  assert.equal(smoke.verdict({ ...base, ui: { ...ui, sandboxed: false } }).ok, false);
+  assert.equal(smoke.verdict({ ...base, ui: { ...ui, sandboxed: undefined } }).ok, false);
+  assert.equal(smoke.verdict({ ...base, ui: { ...ui, contextIsolated: false } }).ok, false);
+  assert.equal(smoke.verdict({ ...base, ui: { ...ui, node: true } }).ok, false);
   assert.equal(smoke.verdict({ ...base, visible: false }).ok, false);
   assert.equal(smoke.verdict({ ...base, sandboxOff: true }).ok, false);
 
-  const rede = smoke.verdict({ ...base, blocked: ['https://pokeidle.io/app'] });
+  const rede = smoke.verdict({ ...base, blocked: ['https://pokeidle.io'] });
   assert.equal(rede.ok, false);
   assert.match(rede.problems[0], /pokeidle\.io/);
+});
+
+// URL fictícia com o formato de um webhook; o "segredo" é inventado.
+const FAKE_HOOK = 'https://discord.com/api/webhooks/123456789012345678/SEGREDO-FICTICIO-abc';
+
+test('fumaça: diagnóstico de rede só guarda a origem, nunca o caminho', () => {
+  assert.equal(smoke.redactUrl(FAKE_HOOK), 'https://discord.com');
+  assert.equal(smoke.redactUrl(new Request(FAKE_HOOK)), 'https://discord.com');
+  assert.equal(smoke.redactUrl('wss://pokeidle.io/socket?token=x'), 'wss://pokeidle.io');
+  assert.equal(smoke.redactUrl('nada disso'), '(endereço inválido)');
+  assert.ok(!smoke.redactUrl('file:///home/x/segredo').includes('segredo'));
+});
+
+test('fumaça: Discord desligado, sem chamar fetch e sem expor o webhook', async () => {
+  const ctx = { blocked: [] };
+  const original = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls++;
+    throw new Error('não devia chamar');
+  };
+  try {
+    const q = smoke.blockedDiscordQueue(ctx);
+    const res = await q.send(FAKE_HOOK, { content: 'x' });
+    assert.equal(res.ok, false);
+    assert.equal(calls, 0);
+  } finally {
+    globalThis.fetch = original;
+  }
+  assert.equal(ctx.blocked.length, 1, 'a tentativa reprova o teste');
+  assert.ok(!ctx.blocked[0].includes('SEGREDO'));
+  assert.equal(smoke.verdict({ ui: { tabs: 1, panels: 4, sandboxed: true, contextIsolated: true, node: false }, expectedPanels: 4, visible: true, blocked: ctx.blocked, sandboxOff: false }).ok, false);
+});
+
+test('fumaça: configuração sem webhook', () => {
+  const c = normalizeConfig(null, plugins.meta());
+  const comHook = { ...c, discord: { ...c.discord, webhookUrl: FAKE_HOOK } };
+  const off = smoke.offlineConfig(comHook);
+  assert.equal(off.discord.webhookUrl, '');
+  assert.equal(comHook.discord.webhookUrl, FAKE_HOOK, 'não altera a configuração recebida');
+  assert.equal(normalizeConfig(off, plugins.meta()).discord.webhookUrl, '');
 });
 
 // ---------- perfil AppArmor ----------

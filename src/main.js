@@ -21,7 +21,11 @@ let events = [];
 const views = new Map(); // panelId -> { view, url }
 const runtime = new Map(); // panelId -> { nick, lastSeen }
 const tracker = new SummaryTracker();
-const queue = new discord.DiscordQueue();
+
+// Teste de fumaça (--teste-fumaca): dados temporários, rede bloqueada e Discord desligado. Precisa vir antes
+// da fila do Discord (que guarda o fetch) e da trava de instância única (que usa a pasta de dados).
+const smoke = smokeTest.isSmokeTest(process.argv) ? smokeTest.setup(app) : null;
+const queue = smoke ? smokeTest.blockedDiscordQueue(smoke) : new discord.DiscordQueue();
 let lastSummaryAt = Date.now();
 let extStore = null;
 const extReady = new Map(); // id da Web Store -> Promise<{ version, path } | null>
@@ -441,10 +445,6 @@ function registerIpc() {
 }
 
 let updater = { install: () => {} };
-
-// Teste de fumaça (--teste-fumaca): dados temporários e rede bloqueada. Precisa vir antes da trava de
-// instância única, que usa a pasta de dados.
-const smoke = smokeTest.isSmokeTest(process.argv) ? smokeTest.setup(app) : null;
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
