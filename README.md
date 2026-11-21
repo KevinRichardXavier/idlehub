@@ -11,7 +11,7 @@ npm install
 npm start
 ```
 
-Testes: `npm test`. Log de diagnóstico: rode com `IDLEHUB_DEBUG=1` (o F12 abre o DevTools da interface).
+Testes: `npm test`. O CI (GitHub Actions, `.github/workflows/ci.yml`) roda `npm ci` e `npm test` em Windows e Linux a cada push na `main` e em cada pull request, com o Node da versão em `.nvmrc`. Log de diagnóstico: rode com `IDLEHUB_DEBUG=1` (o F12 abre o DevTools da interface).
 
 ## Como usar
 

@@ -3,6 +3,8 @@
 /*
 
 !/.gitignore
+!/.github/
+!/.nvmrc
 !/README.md
 !/package.json
 !/package-lock.json
