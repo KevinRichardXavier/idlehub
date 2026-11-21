@@ -5,9 +5,11 @@
 !/.gitignore
 !/.github/
 !/.nvmrc
+!/docs/
 !/README.md
 !/package.json
 !/package-lock.json
+!/scripts/
 !/src/
 !/test/
 
