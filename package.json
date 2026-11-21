@@ -3,13 +3,16 @@
   "productName": "IdleHub",
   "version": "0.2.0",
   "description": "Painéis multi-conta para jogos idle de navegador, com alertas e resumos no Discord.",
+  "homepage": "https://github.com/KevinRichardXavier/idlehub",
   "main": "src/main.js",
   "private": true,
   "author": "IdleHub",
   "scripts": {
     "start": "electron .",
     "test": "node --test \"test/**/*.test.js\"",
+    "fumaca": "electron . --teste-fumaca",
     "dist": "electron-builder --win --publish never",
+    "dist:linux": "electron-builder --linux deb --publish never",
     "release": "electron-builder --win --publish always"
   },
   "build": {
@@ -29,6 +32,12 @@
       "oneClick": true,
       "perMachine": false,
       "artifactName": "IdleHub-Setup-${version}.${ext}"
+    },
+    "linux": {
+      "target": "deb",
+      "category": "Game",
+      "maintainer": "IdleHub",
+      "synopsis": "Painéis multi-conta para jogos idle de navegador"
     },
     "publish": {
       "provider": "github",

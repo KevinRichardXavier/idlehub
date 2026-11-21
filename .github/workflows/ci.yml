@@ -23,10 +23,10 @@ jobs:
       fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest]
-    env:
-      # Os testes (node --test) não abrem o Electron: pular o download do
-      # binário (~100 MB por sistema) deixa o `npm ci` mais rápido e estável.
-      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    # O pacote electron 45 não baixa o binário (~100 MB) na instalação: ele só
+    # vem quando alguém roda `electron` ou `node node_modules/electron/install.js`.
+    # Como `node --test` não abre o Electron, este job nunca baixa o binário. A
+    # antiga ELECTRON_SKIP_BINARY_DOWNLOAD saiu: o Electron 45 nem lê essa variável.
     steps:
       - name: Baixar o código
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -44,3 +44,116 @@ jobs:
 
       - name: Rodar os testes
         run: npm test
+
+  # Prova de que o app abre em Linux: sobe a janela principal sob tela virtual
+  # (xvfb-run) com o sandbox do Chromium ligado, sem abrir nenhum jogo nem a
+  # Chrome Web Store (modo --teste-fumaca: dados temporários e rede bloqueada),
+  # e confere que o processo encerra limpo. Roda no Ubuntu 24.04, o mesmo do
+  # servidor, com a restrição de user namespaces do AppArmor ligada.
+  fumaca-linux:
+    name: Teste de fumaça (Linux, tela virtual)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        # shell explícito liga o pipefail: o código de saída do app não se perde no `| tee`.
+        shell: bash
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Instalar o Node (versão do .nvmrc)
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Baixar o binário do Electron (conferido pelo checksums.json do pacote)
+        run: node node_modules/electron/install.js
+
+      - name: Ligar a restrição de user namespaces do AppArmor (padrão do Ubuntu 24.04)
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=1
+          test "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" = 1
+
+      - name: Sem o perfil AppArmor o sandbox não sobe (prova de que a restrição vale)
+        run: |
+          rc=0
+          timeout 90 xvfb-run -a npm run fumaca > "$RUNNER_TEMP/sem-perfil.log" 2>&1 || rc=$?
+          cat "$RUNNER_TEMP/sem-perfil.log"
+          if [ "$rc" -eq 0 ]; then
+            echo "::error::O app abriu sem o perfil AppArmor: a restrição não está valendo aqui e os testes abaixo não provariam nada."
+            exit 1
+          fi
+          if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+            echo "::error::Tempo esgotado (código $rc): não dá para saber se a falha foi do sandbox."
+            exit 1
+          fi
+          # Só vale a falha específica do sandbox do Chromium, não qualquer outra.
+          if ! grep -E 'FATAL:.*setuid_sandbox_host\.cc.*The SUID sandbox helper binary was found, but is not configured correctly' "$RUNNER_TEMP/sem-perfil.log"; then
+            echo "::error::O app falhou (código $rc), mas não com o erro de sandbox esperado."
+            exit 1
+          fi
+          if grep -q '^IDLEHUB_FUMACA_OK ' "$RUNNER_TEMP/sem-perfil.log"; then
+            echo "::error::O teste de fumaça passou sem o perfil."
+            exit 1
+          fi
+          echo "Falhou com o erro de sandbox do Chromium (código $rc), como esperado."
+
+      - name: Carregar o perfil AppArmor do Electron de node_modules
+        run: |
+          node scripts/perfil-apparmor.js | sudo tee /etc/apparmor.d/idlehub-codigo
+          sudo apparmor_parser -r /etc/apparmor.d/idlehub-codigo
+
+      - name: Teste de fumaça do código-fonte (npm run fumaca)
+        env:
+          IDLEHUB_FUMACA_CAPTURA: ${{ runner.temp }}/fumaca-codigo.png
+        run: |
+          timeout 120 xvfb-run -a -s '-screen 0 1600x1000x24' npm run fumaca 2>&1 | tee "$RUNNER_TEMP/codigo.log"
+          grep -q '^IDLEHUB_FUMACA_OK ' "$RUNNER_TEMP/codigo.log"
+
+      - name: Nenhum processo do Electron ficou para trás
+        run: |
+          if pgrep -a -f 'node_modules/electron/dist/electron'; then
+            echo "::error::Processos do Electron continuam rodando depois do teste."
+            exit 1
+          fi
+
+      - name: Montar o .deb
+        run: npm run dist:linux
+
+      - name: Instalar o .deb (o pós-instalação põe o perfil em /etc/apparmor.d/idlehub)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q ./dist/idlehub_*_amd64.deb
+          cat /etc/apparmor.d/idlehub
+
+      - name: Teste de fumaça do app instalado (/opt/IdleHub/idlehub)
+        env:
+          IDLEHUB_FUMACA_CAPTURA: ${{ runner.temp }}/fumaca-deb.png
+        run: |
+          timeout 120 xvfb-run -a -s '-screen 0 1600x1000x24' /opt/IdleHub/idlehub --teste-fumaca 2>&1 | tee "$RUNNER_TEMP/deb.log"
+          grep -q '^IDLEHUB_FUMACA_OK ' "$RUNNER_TEMP/deb.log"
+          if pgrep -a -f '/opt/IdleHub/idlehub'; then
+            echo "::error::Processos do IdleHub continuam rodando depois do teste."
+            exit 1
+          fi
+
+      - name: Desinstalar o .deb (o pós-remoção tira o perfil)
+        run: |
+          sudo apt-get remove -y -q idlehub
+          test ! -e /etc/apparmor.d/idlehub
+
+      - name: Guardar as capturas da janela
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fumaca-linux
+          path: ${{ runner.temp }}/fumaca-*.png
+          if-no-files-found: warn
+          retention-days: 14

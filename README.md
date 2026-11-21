@@ -13,6 +13,29 @@ npm start
 
 Testes: `npm test`. O CI (GitHub Actions, `.github/workflows/ci.yml`) roda `npm ci` e `npm test` em Windows e Linux a cada push na `main` e em cada pull request, com o Node da versão em `.nvmrc`. Log de diagnóstico: rode com `IDLEHUB_DEBUG=1` (o F12 abre o DevTools da interface).
 
+**Teste de fumaça**: `npm run fumaca` (ou `idlehub --teste-fumaca` no app instalado) abre a janela principal com dados numa pasta temporária, sem nenhuma tela de jogo e com a rede bloqueada, confere que a interface montou e fecha sozinho. Imprime `IDLEHUB_FUMACA_OK` e sai com código 0 se passou; `IDLEHUB_FUMACA_FALHOU` e código 1 se não. Ele não envia nada ao Discord e reprova se o sandbox do Chromium estiver desligado ou se a janela principal não estiver em sandbox com `contextIsolation` (as telas de jogo, que usam `sandbox: false`, não são abertas). O CI roda esse teste no Ubuntu 24.04 sob tela virtual (`xvfb-run`), do código e do `.deb` instalado, e guarda uma captura da janela como artefato `fumaca-linux`.
+
+### Linux
+
+`npm start` funciona no Linux com uma tela (física ou virtual). No Ubuntu 23.10 ou mais novo (inclusive 24.04), o sistema só deixa o sandbox do Chromium funcionar para programas com um perfil AppArmor; sem ele o app fecha ao abrir com `The SUID sandbox helper binary was found, but is not configured correctly`. Para rodar do código, crie um perfil para o Electron do projeto (precisa de sudo, uma vez por clone; refaça se o caminho do clone mudar):
+
+```bash
+node scripts/perfil-apparmor.js | sudo tee /etc/apparmor.d/idlehub-codigo
+sudo apparmor_parser -r /etc/apparmor.d/idlehub-codigo
+```
+
+O perfil só libera a criação de *user namespaces* para o binário do Electron daquele clone. Não use `--no-sandbox` nem desligue a restrição do sistema. Para remover: `sudo apparmor_parser -R /etc/apparmor.d/idlehub-codigo && sudo rm /etc/apparmor.d/idlehub-codigo`.
+
+Pacote: `npm run dist:linux` gera `dist/idlehub_<versão>_amd64.deb` (precisa do `ar`, do pacote `binutils`). O `.deb` instala o app em `/opt/IdleHub/` e já instala e carrega o próprio perfil AppArmor (`/etc/apparmor.d/idlehub`); ao desinstalar, o perfil sai junto.
+
+Para deixar o IdleHub rodando num servidor sem tela e vê-lo de outro computador (pela Tailscale), siga [docs/servidor-linux.md](docs/servidor-linux.md).
+
+## Instalar e atualizar
+
+- **Windows**: `npm run dist` gera o instalador (`IdleHub-Setup-<versão>.exe`). O app instalado se atualiza sozinho pelos GitHub Releases: baixa a versão nova em segundo plano, avisa na interface e instala ao reiniciar.
+- **Linux**: a atualização é **manual**. O app não procura versões novas. Para atualizar, gere e instale o `.deb` novo (`sudo apt install ./dist/idlehub_*_amd64.deb`) ou, rodando do código, `git pull` e `npm ci`. Motivos: atualizar um `.deb` exige root (o atualizador pediria a senha, o que não funciona num servidor sem tela) e os releases não publicam o pacote Linux.
+- Rodando do código (`npm start`) o app nunca se atualiza sozinho, em nenhum sistema.
+
 ## Como usar
 
 - **Abas**: cada aba tem 4 telas, e cada tela é uma sessão independente (login próprio). Use `+` para criar uma aba, clique duplo no nome para renomear e `×` para fechar.
@@ -26,7 +49,7 @@ As telas escondidas continuam rodando normalmente.
 
 - Detecta **shinies capturados** (inclusive os chocados de ovo) e **drops raros de boss e hunt** da própria conta.
 - O app só **lê** as mensagens que o servidor já envia ao jogo. Nada é enviado e a jogabilidade não muda.
-- ⚠️ Os termos do Pokeidle permitem **no máximo 4 contas por pessoa e aparelho**. Acima disso o banimento é permanente. O app mostra um aviso se houver mais de 4 telas do Pokeidle abertas. Cada amigo deve rodar o app no próprio PC.
+- ⚠️ Os termos do Pokeidle permitem **no máximo 4 contas por pessoa e aparelho**. Acima disso o banimento é permanente. O app mostra um aviso se houver mais de 4 telas do Pokeidle abertas. Cada amigo deve rodar o app no próprio PC. Se você também rodar o IdleHub num servidor, as contas de lá somam com as do seu PC: o aviso de cada app só conta as telas dele (veja [docs/servidor-linux.md](docs/servidor-linux.md)).
 
 ## Extensões do Chrome
 
@@ -35,6 +58,7 @@ O app já vem com a extensão [Hunt for PokeIdle](https://chromewebstore.google.
 - Na primeira abertura, o app baixa a extensão direto da Chrome Web Store e confere o SHA-256 informado pela loja. Depois ela fica em cache.
 - A cada abertura, o app consulta a loja em segundo plano. Se houver versão nova, ela é baixada e passa a valer na **próxima** vez que o app abrir.
 - O Electron só suporta parte das APIs de extensão. Extensões que só injetam scripts na página funcionam. Popup, `webRequest`, notificações e outras APIs não funcionam.
+- O teste de fumaça não baixa nem carrega extensões.
 - Para incluir outra extensão, adicione o ID dela ao `CATALOG` em `src/extensions.js`.
 
 ## Adicionar outro jogo
@@ -47,4 +71,7 @@ Sites sem plugin também funcionam nas telas, só que sem detecção de eventos.
 
 ## Onde ficam os dados
 
-`%APPDATA%\idlehub\`: `config.json` (abas, telas e configurações), `events.json` (últimos 300 eventos), `Partitions\` (sessões e logins de cada tela) e `extensions\` (extensões baixadas da Chrome Web Store).
+- Windows: `%APPDATA%\IdleHub\`
+- Linux: `~/.config/IdleHub/` (ou `$XDG_CONFIG_HOME/IdleHub/`, se essa variável estiver definida). No servidor do guia, `/home/idlehub/.config/IdleHub/`.
+
+Dentro dela: `config.json` (abas, telas e configurações), `events.json` (últimos 300 eventos), `Partitions\` (sessões e logins de cada tela) e `extensions\` (extensões baixadas da Chrome Web Store).

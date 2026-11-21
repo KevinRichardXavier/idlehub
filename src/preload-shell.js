@@ -23,4 +23,6 @@ contextBridge.exposeInMainWorld('hub', {
   installUpdate: () => ipcRenderer.send('update:install'),
   onUpdateReady: on('update:ready'),
   onExtensions: on('extensions:update'),
+  // Estado real deste renderer; o teste de fumaça exige os dois true.
+  rendererInfo: Object.freeze({ sandboxed: process.sandboxed === true, contextIsolated: process.contextIsolated === true }),
 });
