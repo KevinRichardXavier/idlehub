@@ -8,12 +8,19 @@
   "private": true,
   "author": "IdleHub",
   "scripts": {
+    "prestart": "node scripts/montar-preload.js",
     "start": "electron .",
+    "pretest": "node scripts/montar-preload.js",
     "test": "node --test \"test/**/*.test.js\"",
+    "prefumaca": "node scripts/montar-preload.js",
     "fumaca": "electron . --teste-fumaca",
+    "predist": "node scripts/montar-preload.js",
     "dist": "electron-builder --win --publish never",
+    "predist:linux": "node scripts/montar-preload.js",
     "dist:linux": "electron-builder --linux deb --publish never",
-    "release": "electron-builder --win --publish always"
+    "prerelease": "node scripts/montar-preload.js",
+    "release": "electron-builder --win --publish always",
+    "montar": "node scripts/montar-preload.js"
   },
   "build": {
     "appId": "com.idlehub.app",
