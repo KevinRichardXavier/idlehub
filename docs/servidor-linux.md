@@ -35,10 +35,10 @@ O que vai ficar montado:
   liberar uma rede. Contas usadas para contornar o limite por rede podem ser banidas, e a detecção usa a rede
   e o aparelho. O jogo também pode banir redes que considere abusivas.
 - **O IP do servidor é de datacenter.** Para o jogo, o servidor sai na internet com um endereço de
-  hospedagem, diferente do IP da sua casa, e o Pokeidle pode bloquear esse tipo de rede. Um proxy não é um
-  jeito de contornar bloqueio nem limite do jogo: só use um (veja
-  [Proxy residencial (pela tela)](#proxy-residencial-pela-tela)) se o suporte do jogo tiver liberado o seu
-  caso, e sempre dentro dos limites acima. Na dúvida, pergunte ao suporte antes de mover contas para o servidor.
+  hospedagem, diferente do IP da sua casa, e o Pokeidle pode bloquear esse tipo de rede. O app tem um proxy
+  opcional, desligado por padrão (veja [Proxy residencial (pela tela)](#proxy-residencial-pela-tela)), mas
+  proxy não é jeito de contornar bloqueio nem limite do jogo: os limites acima continuam valendo.
+- **Cabe a você confirmar com o suporte do jogo antes de conectar contas por proxy.**
 
 ---
 
@@ -257,7 +257,8 @@ antes se nada mais no servidor usa esses pacotes.
 ## Proxy residencial (pela tela)
 
 Para as telas de jogo saírem por um proxy em vez do IP do servidor, configure tudo pela tela do app, no
-VNC (passo 6). Não precisa de sudo nem de reiniciar o serviço.
+VNC (passo 6). Não precisa de sudo nem de reiniciar o serviço. Antes de conectar contas por proxy, confirme
+com o suporte do jogo: cabe a quem usa.
 
 1. Abra ⚙ Configurações › Proxy e marque **Usar proxy nas telas de jogo**.
 2. Escolha o tipo e preencha host e porta do provedor. Com usuário e senha, use o endereço `http` ou `https`
