@@ -154,7 +154,7 @@ function proxyState() {
 }
 
 async function proxyInfo() {
-  return { ...(await proxySecret.info()), ...proxyState() };
+  return { ...(await proxySecret.info(config.proxy)), ...proxyState() };
 }
 
 async function sendProxyInfo() {
@@ -181,7 +181,7 @@ async function applyProxyLive() {
     if (wc.isDestroyed()) continue;
     runtime.delete(id);
     if (failed.has(wc.session)) wc.loadURL(proxyBlockedPage()).catch(() => {});
-    else wc.loadURL(v.url).catch(() => {});
+    else loadPanel(v);
   }
   sendProxyInfo().catch(() => {});
   return list.length;
@@ -189,7 +189,23 @@ async function applyProxyLive() {
 
 // ---------- telas de jogo ----------
 
-function createView(panel) {
+// Toda navegação de uma tela de jogo para o endereço dela passa por aqui (criação, edição do endereço,
+// recarregar depois de travar, mudança do proxy): reaplica o proxy atual na sessão e só então carrega. Se
+// o proxy estiver ligado e não puder ser aplicado, a tela vai para a página sem conexão, nunca sai direto.
+function loadPanel(v) {
+  const wc = v.view.webContents;
+  return proxyManager.applyToSession(wc.session).then(
+    () => {
+      if (!wc.isDestroyed()) wc.loadURL(v.url).catch(() => {});
+    },
+    () => {
+      if (!wc.isDestroyed()) wc.loadURL(proxyBlockedPage()).catch(() => {});
+    },
+  );
+}
+
+// `entry`: o item de `views` desta tela ({ url }); `view` é preenchido aqui.
+function createView(panel, entry) {
   const partition = `persist:panel-${panel.id}`;
   const view = new WebContentsView({ webPreferences: panelWebPreferences(partition) });
   const wc = view.webContents;
@@ -242,12 +258,13 @@ function createView(panel) {
   // O proxy precisa estar aplicado na sessão antes de qualquer requisição da tela; se não der, a tela não
   // carrega o jogo (nunca sai pelo IP direto). A extensão precisa estar carregada antes da página, para os
   // content scripts entrarem já no início.
+  entry.view = view;
   proxyManager.applyToSession(wc.session).then(
     () =>
       syncSessionExtensions(wc.session)
         .catch(() => {})
         .finally(() => {
-          if (!wc.isDestroyed()) wc.loadURL(panel.url).catch(() => {});
+          if (!wc.isDestroyed()) loadPanel(entry); // usa entry.url: o endereço pode ter mudado nesse meio-tempo
         }),
     () => {
       if (!wc.isDestroyed()) wc.loadURL(proxyBlockedPage()).catch(() => {});
@@ -281,11 +298,13 @@ function syncViews() {
   for (const p of wanted.values()) {
     const v = views.get(p.id);
     if (!v) {
-      views.set(p.id, { view: createView(p), url: p.url });
+      const entry = { url: p.url };
+      createView(p, entry);
+      views.set(p.id, entry);
     } else if (v.url !== p.url) {
       v.url = p.url;
       runtime.delete(p.id);
-      v.view.webContents.loadURL(p.url).catch(() => {});
+      loadPanel(v);
     }
   }
 }
@@ -481,7 +500,8 @@ function registerIpc() {
     const v = views.get(panelId);
     if (!v) return;
     const wc = v.view.webContents;
-    if (wc.isCrashed()) wc.loadURL(v.url).catch(() => {});
+    // Travada ou na página sem conexão: volta ao endereço da tela pelo caminho que reaplica o proxy.
+    if (wc.isCrashed() || wc.getURL().startsWith('data:')) loadPanel(v);
     else wc.reload();
   });
 
