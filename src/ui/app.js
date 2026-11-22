@@ -9,6 +9,7 @@ const state = {
   runtime: {},
   plugins: [],
   extensions: [],
+  proxyInfo: null, // { hasPassword, unreadable, storage, storageLabel, refused } (nunca a senha)
   maximized: null, // panelId expandido na aba ativa
   modalOpen: false,
   unread: new Set(), // abas com evento novo não visto
@@ -110,8 +111,27 @@ function renderBanner() {
         `⚠️ ${count} telas do ${esc(p.name)} abertas. Os termos do jogo permitem no máximo ${p.accountLimit} contas por pessoa/aparelho (risco de banimento permanente).`,
       );
   }
+  const px = state.config.proxy;
+  if (px?.enabled && px.invalid)
+    warnings.push('⚠️ Proxy ligado com configuração inválida: as telas de jogo estão sem conexão. Corrija em ⚙ Configurações › Proxy.');
+  else if (px?.enabled && state.proxyInfo?.refused)
+    warnings.push('⚠️ O proxy recusou o usuário ou a senha: as telas de jogo estão sem conexão. Confira em ⚙ Configurações › Proxy.');
+  else if (px?.enabled && px.username && state.proxyInfo?.unreadable)
+    warnings.push('⚠️ Não consegui ler a senha salva do proxy: digite-a de novo em ⚙ Configurações › Proxy.');
   banner.hidden = !warnings.length;
   banner.innerHTML = warnings.join('<br>');
+  renderProxyBadge();
+}
+
+function renderProxyBadge() {
+  const badge = $('#proxy-badge');
+  const px = state.config.proxy;
+  badge.hidden = !px?.enabled;
+  if (!px?.enabled) return;
+  const bad = px.invalid || state.proxyInfo?.refused;
+  badge.className = bad ? 'erro' : '';
+  badge.textContent = bad ? 'proxy com erro' : `proxy ${px.type}`;
+  badge.title = `Telas de jogo saem pelo proxy ${px.type}://${px.host}:${px.port}. Se ele cair, ficam sem conexão.`;
 }
 
 function statusClass(panelId) {
@@ -372,6 +392,35 @@ function openSettings() {
         )
         .join('')}<p class="hint">Baixadas e atualizadas automaticamente pela Chrome Web Store. Ligar ou desligar recarrega os painéis.</p>`
     : '';
+  const px = c.proxy || { enabled: false, type: 'http', host: '', port: 0, username: '' };
+  const pi = state.proxyInfo || {};
+  const typeOpts = [
+    ['http', 'http'],
+    ['https', 'https (TLS até o proxy)'],
+    ['socks5', 'socks5 (sem usuário e senha)'],
+  ]
+    .map(([v, l]) => `<option value="${v}" ${px.type === v ? 'selected' : ''}>${l}</option>`)
+    .join('');
+  const passHint = pi.unreadable
+    ? 'Não consegui ler a senha salva: digite de novo'
+    : pi.hasPassword
+      ? 'Senha salva (não é mostrada). Deixe vazio para manter'
+      : '';
+  const proxySection = `<h3>Proxy</h3>
+     <label class="check"><input type="checkbox" id="p-on" ${px.enabled ? 'checked' : ''}> Usar proxy nas telas de jogo</label>
+     <div class="proxy-grid">
+       <div><label for="p-type">Tipo</label><select id="p-type">${typeOpts}</select></div>
+       <div><label for="p-port">Porta</label><input type="number" id="p-port" min="1" max="65535" value="${px.port || ''}" placeholder="ex.: 8080"></div>
+       <div class="wide"><label for="p-host">Host</label><input type="text" id="p-host" value="${esc(px.host)}" placeholder="proxy.exemplo.com ou 203.0.113.10" autocomplete="off" spellcheck="false"></div>
+       <div><label for="p-user">Usuário (opcional)</label><input type="text" id="p-user" value="${esc(px.username)}" autocomplete="off" spellcheck="false"></div>
+       <div><label for="p-pass">Senha (opcional)</label><input type="password" id="p-pass" value="" autocomplete="new-password" placeholder="${esc(passHint)}"></div>
+     </div>
+     ${pi.hasPassword || pi.unreadable ? '<label class="check"><input type="checkbox" id="p-clear"> Apagar a senha salva</label>' : ''}
+     <div class="msg aviso" id="p-socks" hidden>socks5 com usuário e senha não funciona: o Chromium (motor do Electron) não suporta autenticação em socks5. Use o endereço http/https do provedor ou libere o IP desta máquina no painel dele.</div>
+     <div class="row"><button class="btn" id="p-test">Testar proxy</button></div>
+     <div class="msg" id="p-msg"></div>
+     <p class="hint">Um proxy para o app todo: vale para todas as telas de jogo e os popups de login (Discord/Google). Se o proxy cair, as telas ficam sem conexão: nunca saem pelo IP direto. O WebRTC também não usa UDP fora do proxy. Discord e atualizações do app saem direto, sem o proxy. Salvar uma mudança no proxy recarrega todas as telas.</p>
+     <p class="hint">Senha guardada ${esc(pi.storageLabel || 'fora do config.json')}. Ela nunca volta para esta tela.</p>`;
   const options = Object.entries(SUMMARY_LABELS)
     .map(([v, l]) => `<option value="${v}" ${Number(v) === d.summaryMinutes ? 'selected' : ''}>${l}</option>`)
     .join('');
@@ -388,6 +437,7 @@ function openSettings() {
      <label class="check"><input type="checkbox" id="s-drops" ${d.notifyDrops ? 'checked' : ''}> Avisar drops raros</label>
      <label>Resumo automático</label>
      <select id="s-interval">${options}</select>
+     ${proxySection}
      ${pluginSections}
      ${extSection}
      <div class="actions"><button class="btn" data-cancel>Cancelar</button><button class="btn primary" id="s-save">Salvar</button></div>`,
@@ -408,12 +458,53 @@ function openSettings() {
         show(await hub.summaryNow(), 'Resumo enviado!');
         e.target.disabled = false;
       };
+      const pmsg = $('#p-msg', modal);
+      const showProxy = (cls, text) => {
+        pmsg.className = `msg ${cls}`;
+        pmsg.textContent = text;
+      };
+      const proxyDraft = () => ({
+        enabled: $('#p-on', modal).checked,
+        type: $('#p-type', modal).value,
+        host: $('#p-host', modal).value.trim(),
+        port: $('#p-port', modal).value.trim(),
+        username: $('#p-user', modal).value.trim(),
+        password: $('#p-pass', modal).value,
+        clearPassword: !!$('#p-clear', modal)?.checked,
+      });
+      const socksWarn = () => {
+        const d = proxyDraft();
+        $('#p-socks', modal).hidden = !(d.type === 'socks5' && (d.username || d.password));
+      };
+      for (const id of ['#p-type', '#p-user', '#p-pass', '#p-clear']) {
+        const el = $(id, modal);
+        if (el) el.addEventListener('input', socksWarn);
+        if (el) el.addEventListener('change', socksWarn);
+      }
+      socksWarn();
+      $('#p-test', modal).onclick = async (e) => {
+        e.target.disabled = true;
+        showProxy('', 'Testando pelo proxy…');
+        const res = await hub.testProxy(proxyDraft());
+        e.target.disabled = false;
+        if (!res.ok) return showProxy('erro', `Falhou: ${res.error}`);
+        const onde = [res.city, res.region, res.country].filter(Boolean).join(', ');
+        showProxy('ok', `IP de saída pelo proxy: ${res.ip}${onde ? ` · ${onde}` : ''}${res.org ? ` · ${res.org}` : ''} (visto por ${res.servico})`);
+      };
       $('#s-save', modal).onclick = async () => {
         const url = $('#s-webhook', modal).value.trim();
         if (url && !/^https:\/\/(?:(?:ptb|canary)\.)?(?:discord|discordapp)\.com\/api\/webhooks\/\d+\/[\w-]+\/?$/.test(url)) {
           show({ ok: false, error: 'URL de webhook inválida. Ela começa com https://discord.com/api/webhooks/' });
           return;
         }
+        const pres = await hub.saveProxy(proxyDraft());
+        if (!pres.ok) {
+          showProxy('erro', pres.error);
+          $(`#p-${{ type: 'type', host: 'host', port: 'port', username: 'user', password: 'pass' }[pres.field] || 'host'}`, modal)?.focus();
+          return;
+        }
+        state.config.proxy = pres.config;
+        state.proxyInfo = pres.info;
         const checks = [...modal.querySelectorAll('[data-plugin]')];
         const extChecks = [...modal.querySelectorAll('[data-ext]')];
         await commit((cfg) => {
@@ -546,6 +637,13 @@ hub.onExtensions((list) => {
   state.extensions = list;
 });
 
+hub.onProxy(({ config, info }) => {
+  state.config.proxy = config;
+  state.proxyInfo = info;
+  renderBanner();
+  scheduleLayout();
+});
+
 // ---------- início ----------
 
 (async () => {
@@ -556,6 +654,7 @@ hub.onExtensions((list) => {
     runtime: s.runtime,
     plugins: s.plugins,
     extensions: s.extensions || [],
+    proxyInfo: await hub.proxyInfo(),
   });
   render();
   $('#brand').title = `IdleHub v${await hub.version()}`;
