@@ -1,0 +1,152 @@
+name: Release
+
+# Publica o instalador do Windows num GitHub Release. Só roda à mão (Actions › Release › Run
+# workflow, ou `gh workflow run release.yml --ref main`), a partir da main, e só publica se:
+# - o CI da main estiver verde no mesmo commit;
+# - a versão do package.json ainda não tiver tag nem release (nunca reescrevemos um publicado);
+# - existir docs/notas-da-versao/v<versão>.md com as notas da versão;
+# - o instalador, o .blockmap e o latest.yml baterem entre si (scripts/conferir-instalador.js).
+#
+# O instalador é montado no Windows porque o NSIS do electron-builder precisa do Wine fora dele.
+# Em pull requests que mexem na versão, nas notas ou neste arquivo, o job de montagem roda como
+# ensaio (monta e confere o instalador) e nada é publicado.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - package.json
+      - package-lock.json
+      - docs/notas-da-versao/**
+      - scripts/conferir-instalador.js
+
+permissions:
+  contents: read
+
+# Nunca dois releases ao mesmo tempo, e um release em andamento não é cancelado.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  instalador:
+    name: Instalador Windows
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read # para conferir o CI da main no mesmo commit
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      versao: ${{ steps.versao.outputs.versao }}
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Instalar o Node (versão do .nvmrc)
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Conferir versão, notas, tag e CI
+        id: versao
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSAO="$(node -p "require('./package.json').version")"
+          NOTAS="docs/notas-da-versao/v$VERSAO.md"
+          if [ ! -s "$NOTAS" ]; then
+            echo "::error::Faltam as notas da versão em $NOTAS."
+            exit 1
+          fi
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            if [ "$GITHUB_REF" != refs/heads/main ]; then
+              echo "::error::Release só sai da main (pedido em $GITHUB_REF)."
+              exit 1
+            fi
+            if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSAO" > /dev/null 2>&1; then
+              echo "::error::A tag v$VERSAO já existe. Suba a versão no package.json: release publicado não é reescrito."
+              exit 1
+            fi
+            VERDES="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&branch=main" \
+              --jq '[.workflow_runs[] | select(.conclusion == "success")] | length')"
+            if [ "$VERDES" -lt 1 ]; then
+              echo "::error::O CI da main não está verde no commit $GITHUB_SHA."
+              exit 1
+            fi
+          fi
+          echo "versao=$VERSAO" >> "$GITHUB_OUTPUT"
+          echo "Versão $VERSAO, commit $GITHUB_SHA."
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Rodar os testes
+        run: npm test
+
+      - name: Montar o instalador (npm run dist)
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npm run dist
+
+      - name: Conferir instalador, blockmap e latest.yml
+        run: node scripts/conferir-instalador.js dist "${{ steps.versao.outputs.versao }}"
+
+      - name: Guardar o instalador
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: instalador-windows
+          path: |
+            dist/IdleHub-Setup-${{ steps.versao.outputs.versao }}.exe
+            dist/IdleHub-Setup-${{ steps.versao.outputs.versao }}.exe.blockmap
+            dist/latest.yml
+          if-no-files-found: error
+          retention-days: 14
+
+  publicar:
+    name: Publicar o release
+    needs: instalador
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # criar a tag e o release; só este job escreve
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Baixar o instalador montado
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: instalador-windows
+          path: ${{ runner.temp }}/instalador
+
+      - name: Conferir de novo o que vai ser publicado
+        run: node scripts/conferir-instalador.js "$RUNNER_TEMP/instalador" "${{ needs.instalador.outputs.versao }}"
+
+      - name: Criar a tag e o release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSAO: ${{ needs.instalador.outputs.versao }}
+        run: |
+          # Conferido de novo aqui: se a tag tiver aparecido durante a montagem, não publica por cima.
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v$VERSAO" > /dev/null 2>&1; then
+            echo "::error::A tag v$VERSAO já existe. Nada foi publicado."
+            exit 1
+          fi
+          gh release create "v$VERSAO" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "$VERSAO" \
+            --notes-file "docs/notas-da-versao/v$VERSAO.md" \
+            "$RUNNER_TEMP/instalador/IdleHub-Setup-$VERSAO.exe" \
+            "$RUNNER_TEMP/instalador/IdleHub-Setup-$VERSAO.exe.blockmap" \
+            "$RUNNER_TEMP/instalador/latest.yml"
+          echo "Publicado: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/v$VERSAO"
