@@ -327,6 +327,38 @@ test('request-gate: bloqueadores de chaves diferentes convivem num só ouvinte d
   assert.equal(gate.hasBlocker(s, 'fumaca'), true);
 });
 
+test('request-gate: se o registro do ouvinte falhar uma vez, a tentativa seguinte instala o bloqueio', () => {
+  const gate = require('../src/request-gate');
+  const s = fakeSession();
+  const register = s.webRequest.onBeforeRequest;
+  s.webRequest.onBeforeRequest = () => {
+    throw new Error('falha simulada no registro');
+  };
+  assert.throws(() => gate.setBlocker(s, 'proxy', () => true), /falha simulada/);
+  assert.equal(gate.hasBlocker(s, 'proxy'), false, 'sem ouvinte, a sessão não pode constar como bloqueada');
+  s.webRequest.onBeforeRequest = register;
+  gate.setBlocker(s, 'proxy', () => true);
+  assert.equal(s.listeners, 1);
+  assert.equal(gate.hasBlocker(s, 'proxy'), true);
+  assert.equal(s.request('https://jogo.example/'), 'cancelada');
+});
+
+test('sessões: blockSession que falhou ao registrar o ouvinte bloqueia de verdade na tentativa seguinte', async (t) => {
+  const { m } = makeManager(t);
+  const s = fakeSession();
+  const register = s.webRequest.onBeforeRequest;
+  s.webRequest.onBeforeRequest = () => {
+    throw new Error('falha simulada no registro');
+  };
+  await m.blockSession(s);
+  assert.equal(m.isBlocked(s), false, 'a primeira tentativa não conseguiu barrar as requisições');
+  s.webRequest.onBeforeRequest = register;
+  await m.blockSession(s);
+  assert.equal(m.isBlocked(s), true);
+  for (const url of ['http://jogo.example/', 'https://jogo.example/', 'ws://jogo.example/', 'wss://jogo.example/'])
+    assert.equal(s.request(url), 'cancelada', url);
+});
+
 test('request-gate: nenhum código registra onBeforeRequest por fora dele', () => {
   for (const f of fs.readdirSync(SRC).filter((n) => n.endsWith('.js') && n !== 'request-gate.js')) {
     const code = fs.readFileSync(path.join(SRC, f), 'utf8');
