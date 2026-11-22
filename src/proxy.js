@@ -141,6 +141,11 @@ function sessionProxyConfig(p) {
   return { mode: 'fixed_servers', proxyRules: proxyRules(p), proxyBypassRules: BYPASS_RULES };
 }
 
+// Bloqueio da sessão: usado quando a configuração não pôde ser aplicada. Tudo vai para um proxy local que não
+// existe (porta 9, discard), sem `direct://` e sem exceção nem para o loopback: nenhuma página da sessão
+// (tela, popup de login, extensão) sai pela rota antiga nem direto; tudo falha com erro de proxy.
+const BLOCK_CONFIG = Object.freeze({ mode: 'fixed_servers', proxyRules: 'http://127.0.0.1:9', proxyBypassRules: BYPASS_RULES });
+
 // WebRTC: com o proxy ligado, nada de UDP fora do proxy (o WebRTC não expõe o IP real nem os IPs locais).
 const webRtcPolicy = (p) => (p && p.enabled ? WEBRTC_POLICY_ON : WEBRTC_POLICY_OFF);
 
@@ -263,6 +268,7 @@ module.exports = {
   normalizeProxy,
   proxyRules,
   sessionProxyConfig,
+  BLOCK_CONFIG,
   webRtcPolicy,
   sameSettings,
   destinationOf,

@@ -12,6 +12,7 @@
 const {
   validateProxy,
   sessionProxyConfig,
+  BLOCK_CONFIG,
   sameSettings,
   isOurProxy,
   REBIND_ERROR,
@@ -51,15 +52,38 @@ class ProxyManager {
     return run;
   }
 
-  // Aplica a configuração atual numa sessão. Rejeita se o proxy estiver ligado mas inválido: quem chama
-  // não pode carregar a tela nesse caso.
+  // Aplica a configuração atual numa sessão. Se não der (proxy ligado mas inválido, ou o setProxy falhou), a
+  // sessão inteira é bloqueada antes de rejeitar: a configuração anterior da sessão continuaria valendo para
+  // tudo o que usa a mesma partição (popups de login inclusos), então ela é trocada pelo BLOCK_CONFIG e as
+  // conexões abertas são derrubadas. Quem chama não pode carregar a tela nesse caso.
   applyToSession(ses) {
     return this.serial(async () => {
-      const cfg = sessionProxyConfig(this.settings());
-      await ses.setProxy(cfg);
+      let cfg;
+      try {
+        cfg = sessionProxyConfig(this.settings());
+        await ses.setProxy(cfg);
+      } catch (err) {
+        await this.blockSession(ses);
+        throw err;
+      }
       this.log(`[proxy] sessão: ${cfg.mode === 'fixed_servers' ? cfg.proxyRules : cfg.mode}`);
       return cfg;
     });
+  }
+
+  // Melhor esforço: cada passo é tentado mesmo se o anterior falhar.
+  async blockSession(ses) {
+    try {
+      await ses.setProxy(BLOCK_CONFIG);
+      this.log('[proxy] sessão bloqueada: o proxy não pôde ser aplicado');
+    } catch {
+      this.log('[proxy] não deu para bloquear a sessão; as janelas dela serão fechadas');
+    }
+    try {
+      await ses.closeAllConnections();
+    } catch {
+      /* segue: as janelas da sessão são fechadas ou levadas à página sem conexão por quem chamou */
+    }
   }
 
   // Mudança com o app aberto: aplica em cada sessão, derruba as conexões já abertas (que ainda usavam a
@@ -75,6 +99,11 @@ class ProxyManager {
         await ses.clearAuthCache();
       } catch {
         failed.push(ses);
+        try {
+          await ses.clearAuthCache();
+        } catch {
+          /* melhor esforço */
+        }
       }
     }
     return failed;

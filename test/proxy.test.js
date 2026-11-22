@@ -223,12 +223,27 @@ test('sessões: aplica a regra do proxy antes de carregar e reaplica ao vivo der
     assert.deepEqual(s.calls, [['setProxy', proxy.sessionProxyConfig(ON)], ['closeAllConnections'], ['clearAuthCache']]);
 });
 
-test('sessões: proxy ligado e inválido não é aplicado e a tela não carrega o jogo', async (t) => {
+test('sessões: proxy ligado e inválido não é aplicado; a sessão inteira fica bloqueada e a tela não carrega o jogo', async (t) => {
   const { m } = makeManager(t, { settings: { ...ON, invalid: true } });
   const s = fakeSession();
   await assert.rejects(m.applyToSession(s));
-  assert.deepEqual(s.calls, [], 'nenhuma configuração (nem "system") foi aplicada');
+  assert.deepEqual(
+    s.calls,
+    [['setProxy', proxy.BLOCK_CONFIG], ['closeAllConnections']],
+    'nem "system" nem a rota anterior: só o bloqueio, e as conexões abertas caem',
+  );
+  s.calls.length = 0;
   assert.deepEqual(await m.applyLive([s]), [s], 'a sessão volta como falha e a tela vai para a página sem conexão');
+  assert.deepEqual(s.calls, [['setProxy', proxy.BLOCK_CONFIG], ['closeAllConnections'], ['clearAuthCache']]);
+});
+
+test('sessões: o bloqueio não tem saída direta nem exceção', () => {
+  const b = proxy.BLOCK_CONFIG;
+  assert.equal(b.mode, 'fixed_servers');
+  assert.equal(b.proxyRules, 'http://127.0.0.1:9');
+  assert.ok(!/direct/i.test(b.proxyRules));
+  assert.equal(b.proxyBypassRules, '<-loopback>', 'nem o loopback escapa do bloqueio');
+  assert.ok(Object.isFrozen(b));
 });
 
 test('sessões: falha do setProxy numa sessão não deixa a tela na rota antiga', async (t) => {
@@ -237,6 +252,28 @@ test('sessões: falha do setProxy numa sessão não deixa a tela na rota antiga'
   const ruim = { ...fakeSession(), setProxy: async () => Promise.reject(new Error('falhou')) };
   assert.deepEqual(await m.applyLive([ruim, ok]), [ruim]);
   assert.equal(ok.calls[0][0], 'setProxy');
+});
+
+test('sessões: setProxy que falha com a configuração nova troca a sessão pelo bloqueio (popups da conta não ficam na rota antiga)', async (t) => {
+  const { m } = makeManager(t, { settings: ON });
+  const s = fakeSession();
+  const real = s.setProxy;
+  s.setProxy = async (cfg) => {
+    if (cfg !== proxy.BLOCK_CONFIG) throw new Error('falhou');
+    return real(cfg);
+  };
+  await assert.rejects(m.applyToSession(s), /falhou/);
+  assert.deepEqual(s.calls, [['setProxy', proxy.BLOCK_CONFIG], ['closeAllConnections']]);
+});
+
+test('sessões: se nem o bloqueio entra, ainda derruba as conexões e esquece a autenticação', async (t) => {
+  const { m } = makeManager(t, { settings: ON });
+  const s = fakeSession();
+  s.setProxy = async () => {
+    throw new Error('falhou');
+  };
+  assert.deepEqual(await m.applyLive([s]), [s]);
+  assert.deepEqual(s.calls, [['closeAllConnections'], ['clearAuthCache']]);
 });
 
 test('sessões: aplicações em sequência terminam na última configuração pedida', async (t) => {
@@ -257,7 +294,7 @@ test('main.js: tela de jogo só carrega o jogo depois do proxy aplicado; se falh
   const main = fs.readFileSync(path.join(SRC, 'main.js'), 'utf8');
   const loadPanel = main.slice(main.indexOf('function loadPanel('), main.indexOf('function createView('));
   assert.match(loadPanel, /return proxyManager\.applyToSession\(wc\.session\)\.then\(\s*\(\) => \{\s*if \(!wc\.isDestroyed\(\)\) wc\.loadURL\(v\.url\)/);
-  assert.match(loadPanel, /\(\) => \{\s*if \(!wc\.isDestroyed\(\)\) wc\.loadURL\(proxyBlockedPage\(\)\)/);
+  assert.match(loadPanel, /\(\) => \{\s*closePopupsOf\(new Set\(\[wc\.session\]\)\);\s*if \(!wc\.isDestroyed\(\)\) wc\.loadURL\(proxyBlockedPage\(\)\)/);
   // Fora do loadPanel, nenhum loadURL leva a tela a um endereço: só à página sem conexão.
   const outside = main.replace(loadPanel, '');
   for (const call of outside.match(/\.loadURL\([^)]*\)/g) || []) assert.equal(call, '.loadURL(proxyBlockedPage()', call);
@@ -267,7 +304,16 @@ test('main.js: tela de jogo só carrega o jogo depois do proxy aplicado; se falh
   const sync = main.slice(main.indexOf('function syncViews('), main.indexOf('function applyLayout('));
   assert.match(sync, /v\.url = p\.url;\s*runtime\.delete\(p\.id\);\s*loadPanel\(v\);/);
   assert.match(main, /if \(wc\.isCrashed\(\) \|\| wc\.getURL\(\)\.startsWith\('data:'\)\) loadPanel\(v\);\s*else wc\.reload\(\);/);
-  assert.match(main, /if \(failed\.has\(wc\.session\)\) wc\.loadURL\(proxyBlockedPage\(\)\)\.catch\(\(\) => \{\}\);\s*else loadPanel\(v\);/);
+  assert.match(main, /if \(failed\.has\(wc\.session\)\) wc\.loadURL\(proxyBlockedPage\(\)\)\.catch\(\(\) => \{\}\);\s*else loads\.push\(loadPanel\(v\)\);/);
+  // Mudança ao vivo: fecha os popups das sessões que falharam e só termina depois que cada tela começou a
+  // carregar de novo (uma recarga atrasada não derruba a navegação seguinte).
+  const live = main.slice(main.indexOf('async function applyProxyLive('), main.indexOf('function closePopupsOf('));
+  assert.match(live, /closePopupsOf\(failed\);/);
+  assert.ok(live.indexOf('await Promise.all(loads);') > live.indexOf('loads.push(loadPanel(v))'), 'espera as recargas');
+  assert.ok(live.indexOf('await Promise.all(loads);') < live.indexOf('return list.length;'));
+  const close = main.slice(main.indexOf('function closePopupsOf('), main.indexOf('function loadPanel('));
+  assert.match(close, /panelWcs\.has\(wc\) \|\| !sessions\.has\(wc\.session\) \|\| wc\.getType\(\) !== 'window'/);
+  assert.match(close, /if \(popup && popup !== win\) popup\.close\(\);/);
   // Popups de login usam a mesma partição (e portanto o mesmo proxy) da conta.
   assert.match(create, /webPreferences: \{ partition, sandbox: true, contextIsolation: true \}/);
   // O config:set da interface não muda o proxy por fora do proxy:save.

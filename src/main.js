@@ -176,15 +176,33 @@ async function applyProxyLive() {
   const list = [...views.values()].map((v) => v.view.webContents).filter((wc) => !wc.isDestroyed());
   const failed = new Set(await proxyManager.applyLive(list.map((wc) => wc.session)));
   for (const wc of webContents.getAllWebContents()) setWebRtcPolicy(wc);
+  closePopupsOf(failed);
+  // Espera cada tela começar a carregar de novo: quem salva só segue depois disso, e nenhuma navegação
+  // feita em seguida é derrubada por uma recarga atrasada.
+  const loads = [];
   for (const [id, v] of views) {
     const wc = v.view.webContents;
     if (wc.isDestroyed()) continue;
     runtime.delete(id);
     if (failed.has(wc.session)) wc.loadURL(proxyBlockedPage()).catch(() => {});
-    else loadPanel(v);
+    else loads.push(loadPanel(v));
   }
+  await Promise.all(loads);
   sendProxyInfo().catch(() => {});
   return list.length;
+}
+
+// Fecha as janelas que não são telas de jogo (popups de login) das sessões em que o proxy não pôde ser
+// aplicado: a sessão já foi bloqueada, e fechar garante que nenhuma página fique aberta na rota antiga.
+function closePopupsOf(sessions) {
+  if (!sessions || sessions.size === 0) return;
+  const panelWcs = new Set([...views.values()].map((v) => v.view.webContents));
+  for (const wc of webContents.getAllWebContents()) {
+    // Só janelas: páginas de fundo de extensão ficam (a sessão bloqueada já não as deixa sair).
+    if (wc.isDestroyed() || panelWcs.has(wc) || !sessions.has(wc.session) || wc.getType() !== 'window') continue;
+    const popup = BrowserWindow.fromWebContents(wc);
+    if (popup && popup !== win) popup.close();
+  }
 }
 
 // ---------- telas de jogo ----------
@@ -199,6 +217,7 @@ function loadPanel(v) {
       if (!wc.isDestroyed()) wc.loadURL(v.url).catch(() => {});
     },
     () => {
+      closePopupsOf(new Set([wc.session]));
       if (!wc.isDestroyed()) wc.loadURL(proxyBlockedPage()).catch(() => {});
     },
   );

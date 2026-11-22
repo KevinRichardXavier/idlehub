@@ -29,10 +29,12 @@ O que vai ficar montado:
   servidor e as que você usa no PC são todas suas, então contam juntas. Se o PC já tem 4 contas, o servidor
   não pode ter nenhuma conta do Pokeidle. O aviso do app conta só as telas **daquele** app: o IdleHub do
   servidor não enxerga o do PC, e vice-versa. Conferir a soma é com você.
-- **O Pokeidle também limita por rede.** Pela seção 5 dos [termos](https://pokeidle.io/terms) (conferidos
-  em 22/11/2026), cada rede pode ter no máximo **4 contas criadas e 4 contas conectadas ao mesmo tempo**;
-  redes compartilhadas seguem o mesmo limite e, desde 16/11/2026, o jogo não aceita mais pedidos para
-  liberar uma rede. Contas usadas para contornar o limite por rede podem ser banidas, e a detecção usa a rede
+- **O Pokeidle também limita por rede.** Pela seção 5 ("Multicontas") dos [termos](https://pokeidle.io/terms)
+  (versão de 2026-10-12, revisão de 2026-11-18, lidos em português em 22/11/2026), cada rede pode ter no
+  máximo **4 contas criadas e 4 contas conectadas ao mesmo tempo**. O texto diz: "Redes compartilhadas — lan
+  house, escola, empresa — seguem o mesmo limite: desde 16/11/2026, a equipe não aceita mais pedidos de
+  liberação de rede." A seção 8 da mesma versão ainda cita redes "liberadas pela moderação"; na dúvida,
+  confirme com o suporte do jogo. Contas usadas para contornar o limite por rede podem ser banidas, e a detecção usa a rede
   e o aparelho. O jogo também pode banir redes que considere abusivas.
 - **O IP do servidor é de datacenter.** Para o jogo, o servidor sai na internet com um endereço de
   hospedagem, diferente do IP da sua casa, e o Pokeidle pode bloquear esse tipo de rede. O app tem um proxy
