@@ -2,6 +2,7 @@
 
 const crypto = require('node:crypto');
 const { CATALOG } = require('./extensions');
+const { defaultProxy, normalizeProxy } = require('./proxy');
 
 const PANELS_PER_TAB = 4;
 const SUMMARY_OPTIONS = [0, 15, 30, 60, 120, 360, 720];
@@ -56,6 +57,7 @@ function defaultConfig(pluginsMeta) {
     discord: { webhookUrl: '', notifyShiny: true, notifyDrops: true, summaryMinutes: 60 },
     plugins: defaultPluginSettings(pluginsMeta),
     extensions: Object.fromEntries(CATALOG.map((e) => [e.id, e.defaultOn])),
+    proxy: defaultProxy(),
   };
 }
 
@@ -128,6 +130,8 @@ function normalizeConfig(raw, pluginsMeta) {
     },
     plugins,
     extensions,
+    // A senha do proxy nunca fica aqui (ver src/proxy-secret.js).
+    proxy: normalizeProxy(raw.proxy),
   };
 }
 
