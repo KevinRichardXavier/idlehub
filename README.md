@@ -36,6 +36,16 @@ Para deixar o IdleHub rodando num servidor sem tela e vê-lo de outro computador
 - **Linux**: a atualização é **manual**. O app não procura versões novas. Para atualizar, gere e instale o `.deb` novo (`sudo apt install ./dist/idlehub_*_amd64.deb`) ou, rodando do código, `git pull` e `npm ci`. Motivos: atualizar um `.deb` exige root (o atualizador pediria a senha, o que não funciona num servidor sem tela) e os releases não publicam o pacote Linux.
 - Rodando do código (`npm start`) o app nunca se atualiza sozinho, em nenhum sistema.
 
+### Publicar uma versão
+
+Os releases saem pelo workflow **Release** (`.github/workflows/release.yml`), que monta o instalador num Windows do GitHub Actions (fora do Windows, o NSIS do electron-builder precisa do Wine) e o publica junto com o `.blockmap` e o `latest.yml`, que é o que o app instalado lê para se atualizar.
+
+1. Num PR: suba a versão (`npm version <x.y.z> --no-git-tag-version`) e escreva as notas da versão, em pt-BR, em `docs/notas-da-versao/v<x.y.z>.md`. O `npm test` reprova se faltarem as notas ou se o `package-lock.json` estiver com outra versão. Nesse PR o workflow roda como ensaio: monta e confere o instalador sem publicar nada.
+2. Depois do merge e com o CI da `main` verde no commit, dispare o workflow: `gh workflow run release.yml --ref main` (ou Actions › Release › Run workflow).
+3. Ele só publica se o CI da `main` estiver verde naquele commit e se ainda não existir tag `v<x.y.z>`; roda o `npm test`, monta com `npm run dist`, confere com `scripts/conferir-instalador.js` que versão, nome do arquivo, tamanho e sha512 do `latest.yml` batem com o `.exe` e então cria a tag e o release com as notas. Release publicado nunca é apagado nem reescrito: correção sai como versão nova.
+
+O `npm run release` (electron-builder publicando direto) continua existindo, mas o caminho usado é o workflow.
+
 ## Como usar
 
 - **Abas**: cada aba tem 4 telas, e cada tela é uma sessão independente (login próprio). Use `+` para criar uma aba, clique duplo no nome para renomear e `×` para fechar.
