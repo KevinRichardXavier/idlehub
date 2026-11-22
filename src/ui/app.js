@@ -404,7 +404,7 @@ function openSettings() {
   const passHint = pi.unreadable
     ? 'Não consegui ler a senha salva: digite de novo'
     : pi.hasPassword
-      ? 'Senha salva (não é mostrada). Deixe vazio para manter'
+      ? 'Senha salva (não é mostrada). Vazio mantém, se o proxy e o usuário forem os mesmos'
       : '';
   const proxySection = `<h3>Proxy</h3>
      <label class="check"><input type="checkbox" id="p-on" ${px.enabled ? 'checked' : ''}> Usar proxy nas telas de jogo</label>
@@ -420,7 +420,8 @@ function openSettings() {
      <div class="row"><button class="btn" id="p-test">Testar proxy</button></div>
      <div class="msg" id="p-msg"></div>
      <p class="hint">Um proxy para o app todo: vale para todas as telas de jogo e os popups de login (Discord/Google). Se o proxy cair, as telas ficam sem conexão: nunca saem pelo IP direto. O WebRTC também não usa UDP fora do proxy. Discord e atualizações do app saem direto, sem o proxy. Salvar uma mudança no proxy recarrega todas as telas.</p>
-     <p class="hint">Senha guardada ${esc(pi.storageLabel || 'fora do config.json')}. Ela nunca volta para esta tela.</p>`;
+     <p class="hint">Senha guardada ${esc(pi.storageLabel || 'fora do config.json')}. Ela nunca volta para esta tela e só é enviada ao proxy (tipo, host, porta e usuário) em que foi digitada.</p>
+     <p class="hint">Pokeidle: as regras limitam 4 contas por pessoa (somando todas as redes e aparelhos) e 4 contas conectadas por rede; contas usadas para contornar o limite por rede podem ser banidas. Todas as telas saem pelo mesmo proxy. Prefira um IP fixo (sticky/estático), de preferência só seu.</p>`;
   const options = Object.entries(SUMMARY_LABELS)
     .map(([v, l]) => `<option value="${v}" ${Number(v) === d.summaryMinutes ? 'selected' : ''}>${l}</option>`)
     .join('');

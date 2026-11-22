@@ -25,16 +25,20 @@ O que vai ficar montado:
 ## Antes de começar: aviso honesto sobre o Pokeidle
 
 - **O limite de 4 contas soma o servidor e o seu PC.** Os termos do Pokeidle permitem no máximo
-  **4 contas por pessoa e aparelho**, com banimento permanente acima disso. As contas que você abrir no
+  **4 contas por pessoa, somando todas as redes e aparelhos**, com banimento permanente acima disso. As contas que você abrir no
   servidor e as que você usa no PC são todas suas, então contam juntas. Se o PC já tem 4 contas, o servidor
   não pode ter nenhuma conta do Pokeidle. O aviso do app conta só as telas **daquele** app: o IdleHub do
   servidor não enxerga o do PC, e vice-versa. Conferir a soma é com você.
+- **O Pokeidle também limita por rede.** Pela seção 5 dos [termos](https://pokeidle.io/terms) (conferidos
+  em 22/11/2026), cada rede pode ter no máximo **4 contas criadas e 4 contas conectadas ao mesmo tempo**;
+  redes compartilhadas seguem o mesmo limite e, desde 16/11/2026, o jogo não aceita mais pedidos para
+  liberar uma rede. Contas usadas para contornar o limite por rede podem ser banidas, e a detecção usa a rede
+  e o aparelho. O jogo também pode banir redes que considere abusivas.
 - **O IP do servidor é de datacenter.** Para o jogo, o servidor sai na internet com um endereço de
-  hospedagem, diferente do IP da sua casa. Sites e proteções como o Cloudflare costumam desconfiar mais
-  desse tipo de IP (desafios, captchas, bloqueios), e a mesma conta aparecendo de dois IPs diferentes pode
-  chamar atenção. Não sabemos como o Pokeidle trata isso: as regras que conferimos falam do limite de contas,
-  não de IP. Na dúvida, pergunte ao jogo antes de mover contas para o servidor. Se o jogo bloquear o IP do
-  servidor, dá para usar um proxy residencial: veja [Proxy residencial (pela tela)](#proxy-residencial-pela-tela).
+  hospedagem, diferente do IP da sua casa, e o Pokeidle pode bloquear esse tipo de rede. Um proxy não é um
+  jeito de contornar bloqueio nem limite do jogo: só use um (veja
+  [Proxy residencial (pela tela)](#proxy-residencial-pela-tela)) se o suporte do jogo tiver liberado o seu
+  caso, e sempre dentro dos limites acima. Na dúvida, pergunte ao suporte antes de mover contas para o servidor.
 
 ---
 
@@ -267,7 +271,12 @@ VNC (passo 6). Não precisa de sudo nem de reiniciar o serviço.
 - Aqui não há chaveiro, então a senha fica em `/home/idlehub/.config/IdleHub/proxy-senha.json`, com
   permissão 600, em base64 (**não é criptografia**). Quem tem root no servidor consegue lê-la. Detalhes no
   [README](../README.md#proxy).
-- O limite de 4 contas continua o mesmo, com ou sem proxy.
+- Os limites do Pokeidle continuam os mesmos com ou sem proxy: 4 contas por pessoa (servidor e PC somados)
+  e 4 contas conectadas por rede. Todas as telas saem pelo mesmo proxy, que conta como uma rede; o app não
+  tem proxy por conta, de propósito.
+- Prefira um IP fixo (sessão "sticky" ou IP estático/ISP), de preferência dedicado. Proxy residencial
+  rotativo troca de IP o tempo todo e costuma ser compartilhado com outros clientes do provedor, cujas contas
+  podem somar no limite por rede daquele IP.
 
 ## Problemas comuns
 
