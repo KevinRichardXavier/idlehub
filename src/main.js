@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, WebContentsView, ipcMain, Menu, shell } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, Menu, shell, session, net, safeStorage, webContents } = require('electron');
 const path = require('node:path');
 const plugins = require('./plugins');
 const { JsonFile } = require('./jsonfile');
@@ -10,7 +10,11 @@ const { SummaryTracker } = require('./summary');
 const { startUpdater } = require('./updater');
 const extensions = require('./extensions');
 const smokeTest = require('./smoke-test');
+const smokeProxy = require('./smoke-proxy');
 const { panelWebPreferences } = require('./panel-prefs');
+const proxy = require('./proxy');
+const { ProxySecret } = require('./proxy-secret');
+const { ProxyManager } = require('./proxy-manager');
 
 const MAX_EVENTS = 300;
 
@@ -34,6 +38,8 @@ let extStore = null;
 const extReady = new Map(); // id da Web Store -> Promise<{ version, path } | null>
 const extStatus = new Map(); // id da Web Store -> { version, updatedTo, error }
 const extLoaded = new WeakMap(); // session -> Map(id da Web Store -> id carregado no Electron)
+let proxySecret = null;
+let proxyManager = null;
 
 // ---------- helpers ----------
 
@@ -132,6 +138,55 @@ async function applyExtensionSettings() {
   }
 }
 
+// ---------- proxy das telas de jogo ----------
+
+// Página local (sem rede) mostrada numa tela quando o proxy está ligado mas não pôde ser aplicado.
+function proxyBlockedPage() {
+  const html = `<!doctype html><meta charset="utf-8"><title>Sem conexão: proxy</title>
+<body style="font:15px sans-serif;background:#0b1020;color:#e2e8f0;padding:24px">
+<h2>Tela sem conexão</h2><p>O proxy está ligado, mas a configuração dele está inválida ou não pôde ser aplicada.
+Para não sair pelo IP direto, esta tela fica sem conexão. Corrija em ⚙ Configurações › Proxy.</p></body>`;
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+}
+
+function proxyState() {
+  return { refused: proxyManager.authRefused };
+}
+
+async function proxyInfo() {
+  return { ...(await proxySecret.info()), ...proxyState() };
+}
+
+async function sendProxyInfo() {
+  send('proxy:update', { config: config.proxy, info: await proxyInfo() });
+}
+
+function setWebRtcPolicy(wc) {
+  try {
+    wc.setWebRTCIPHandlingPolicy(proxy.webRtcPolicy(config.proxy));
+  } catch {
+    /* webContents já fechado */
+  }
+}
+
+// Proxy mudou com o app aberto: aplica em todas as sessões das telas (popups de login usam a mesma
+// sessão da conta), derruba as conexões antigas e recarrega as telas. Tela cuja sessão não aceitou a
+// configuração vai para a página sem conexão, nunca fica na rota antiga.
+async function applyProxyLive() {
+  const list = [...views.values()].map((v) => v.view.webContents).filter((wc) => !wc.isDestroyed());
+  const failed = new Set(await proxyManager.applyLive(list.map((wc) => wc.session)));
+  for (const wc of webContents.getAllWebContents()) setWebRtcPolicy(wc);
+  for (const [id, v] of views) {
+    const wc = v.view.webContents;
+    if (wc.isDestroyed()) continue;
+    runtime.delete(id);
+    if (failed.has(wc.session)) wc.loadURL(proxyBlockedPage()).catch(() => {});
+    else wc.loadURL(v.url).catch(() => {});
+  }
+  sendProxyInfo().catch(() => {});
+  return list.length;
+}
+
 // ---------- telas de jogo ----------
 
 function createView(panel) {
@@ -184,12 +239,20 @@ function createView(panel) {
 
   view.setVisible(false);
   win.contentView.addChildView(view);
-  // A extensão precisa estar carregada antes da página, para os content scripts entrarem já no início.
-  syncSessionExtensions(wc.session)
-    .catch(() => {})
-    .finally(() => {
-      if (!wc.isDestroyed()) wc.loadURL(panel.url).catch(() => {});
-    });
+  // O proxy precisa estar aplicado na sessão antes de qualquer requisição da tela; se não der, a tela não
+  // carrega o jogo (nunca sai pelo IP direto). A extensão precisa estar carregada antes da página, para os
+  // content scripts entrarem já no início.
+  proxyManager.applyToSession(wc.session).then(
+    () =>
+      syncSessionExtensions(wc.session)
+        .catch(() => {})
+        .finally(() => {
+          if (!wc.isDestroyed()) wc.loadURL(panel.url).catch(() => {});
+        }),
+    () => {
+      if (!wc.isDestroyed()) wc.loadURL(proxyBlockedPage()).catch(() => {});
+    },
+  );
   return view;
 }
 
@@ -400,9 +463,12 @@ function registerIpc() {
     extensions: extensionsState(),
   }));
 
+  ipcMain.handle('proxy:info', () => proxyInfo());
+
   ipcMain.handle('config:set', (_e, next) => {
     const prevExt = JSON.stringify(config.extensions);
-    config = normalizeConfig(next, plugins.meta());
+    // O proxy só muda por proxy:save (que valida, guarda a senha e reaplica nas sessões).
+    config = normalizeConfig({ ...(next && typeof next === 'object' ? next : {}), proxy: config.proxy }, plugins.meta());
     configFile.write(config);
     syncViews();
     if (JSON.stringify(config.extensions) !== prevExt) applyExtensionSettings().catch(() => {});
@@ -425,6 +491,24 @@ function registerIpc() {
   });
 
   ipcMain.handle('discord:summaryNow', () => sendSummary());
+
+  // Proxy: a senha chega aqui e não volta mais para a interface.
+  ipcMain.handle('proxy:save', async (_e, input) => {
+    try {
+      const res = await proxyManager.save(input && typeof input === 'object' ? input : {});
+      if (!res.ok) return { ok: false, field: res.field, error: res.error };
+      if (res.changed) {
+        configFile.write(config);
+        await applyProxyLive();
+      }
+      return { ok: true, changed: res.changed, config: config.proxy, info: await proxyInfo() };
+    } catch (err) {
+      console.error('[proxy] falha ao salvar a configuração do proxy');
+      return { ok: false, error: proxy.describeError(err, [input?.password, input?.username].filter(Boolean)) };
+    }
+  });
+
+  ipcMain.handle('proxy:test', (_e, input) => proxyManager.test(input && typeof input === 'object' ? input : {}));
 
   ipcMain.handle('events:clear', () => {
     events = [];
@@ -466,7 +550,22 @@ if (!app.requestSingleInstanceLock()) {
     }
   });
 
-  app.whenReady().then(() => {
+  // Login pedido por um proxy: só o proxy configurado nas telas recebe usuário e senha (proxy-manager.js).
+  app.on('login', (event, wc, _details, authInfo, callback) => {
+    if (!authInfo?.isProxy || !proxyManager) return; // outros logins: comportamento padrão (cancela)
+    event.preventDefault();
+    const creds = proxyManager.credentialsFor(authInfo, wc ? `tela-${wc.id}` : 'sem-tela');
+    if (creds) return callback(creds.username, creds.password);
+    callback();
+    if (proxyManager.authRefused) sendProxyInfo().catch(() => {});
+  });
+
+  // WebRTC sem UDP fora do proxy em toda janela nova (telas, popups de login e popups dos popups).
+  app.on('web-contents-created', (_e, wc) => {
+    if (config) setWebRtcPolicy(wc);
+  });
+
+  app.whenReady().then(async () => {
     Menu.setApplicationMenu(null);
     const dir = app.getPath('userData');
     configFile = new JsonFile(path.join(dir, 'config.json'));
@@ -476,6 +575,19 @@ if (!app.requestSingleInstanceLock()) {
     configFile.writeNow(config);
     const stored = eventsFile.read([]);
     events = Array.isArray(stored) ? stored.slice(0, MAX_EVENTS) : [];
+
+    proxySecret = new ProxySecret(dir, { safeStorage });
+    await proxySecret.load();
+    proxyManager = new ProxyManager({
+      secret: proxySecret,
+      getSettings: () => config.proxy,
+      setSettings: (p) => {
+        config = { ...config, proxy: p };
+      },
+      net,
+      makeTestSession: () => session.fromPartition('idlehub-teste-proxy'), // só na memória, nunca uma tela de jogo
+      log: process.env.IDLEHUB_DEBUG ? (m) => console.log(m) : () => {},
+    });
 
     if (!smoke) prepareExtensions(); // no teste de fumaça, nada de Chrome Web Store
     registerIpc();
@@ -492,6 +604,19 @@ if (!app.requestSingleInstanceLock()) {
           if (!v) return null;
           return { wc: v.view.webContents, ready: panelInfo.get(testPanelId) || null, nick: runtime.get(testPanelId)?.nick ?? null };
         },
+        // Proxy de verdade no Chromium, com proxies locais de teste (src/smoke-proxy.js).
+        proxyCheck: () =>
+          smokeProxy.run({
+            manager: proxyManager,
+            dir,
+            saveProxy: async (input) => {
+              const res = await proxyManager.save(input);
+              if (res.ok && res.changed) await applyProxyLive();
+              return res;
+            },
+            panelWc: () => views.get(testPanelId)?.view.webContents || null,
+            ctx: smoke,
+          }),
       });
       return;
     }
