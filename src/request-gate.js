@@ -13,17 +13,20 @@ const NETWORK_URLS = ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'];
 
 const gates = new WeakMap();
 
+// A sessão só entra no mapa depois que o ouvinte foi registrado. Se o registro lançar, nada fica guardado e a
+// próxima tentativa registra de novo; senão um bloqueador iria para o mapa sem ouvinte nenhum para aplicá-lo.
 function gateOf(ses) {
   let blockers = gates.get(ses);
   if (!blockers) {
-    blockers = new Map();
-    gates.set(ses, blockers);
+    const fresh = new Map();
     ses.webRequest.onBeforeRequest({ urls: NETWORK_URLS }, (details, cb) => {
-      for (const blocks of blockers.values()) {
+      for (const blocks of fresh.values()) {
         if (blocks(details)) return cb({ cancel: true });
       }
       cb({});
     });
+    gates.set(ses, fresh);
+    blockers = fresh;
   }
   return blockers;
 }
