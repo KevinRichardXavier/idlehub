@@ -255,12 +255,19 @@ test('sessões: aplicações em sequência terminam na última configuração pe
 
 test('main.js: tela de jogo só carrega o jogo depois do proxy aplicado; se falhar, página sem conexão', () => {
   const main = fs.readFileSync(path.join(SRC, 'main.js'), 'utf8');
+  const loadPanel = main.slice(main.indexOf('function loadPanel('), main.indexOf('function createView('));
+  assert.match(loadPanel, /return proxyManager\.applyToSession\(wc\.session\)\.then\(\s*\(\) => \{\s*if \(!wc\.isDestroyed\(\)\) wc\.loadURL\(v\.url\)/);
+  assert.match(loadPanel, /\(\) => \{\s*if \(!wc\.isDestroyed\(\)\) wc\.loadURL\(proxyBlockedPage\(\)\)/);
+  // Fora do loadPanel, nenhum loadURL leva a tela a um endereço: só à página sem conexão.
+  const outside = main.replace(loadPanel, '');
+  for (const call of outside.match(/\.loadURL\([^)]*\)/g) || []) assert.equal(call, '.loadURL(proxyBlockedPage()', call);
+  // Criação, edição do endereço, recarregar depois de travar e mudança do proxy usam o loadPanel.
   const create = main.slice(main.indexOf('function createView('), main.indexOf('function destroyView('));
-  const apply = create.indexOf('proxyManager.applyToSession(wc.session).then(');
-  const load = create.indexOf('wc.loadURL(panel.url)');
-  assert.ok(apply > 0 && load > apply, 'loadURL(panel.url) só dentro do sucesso do applyToSession');
-  assert.equal((create.match(/loadURL\(/g) || []).length, 2, 'um loadURL do jogo e um da página sem conexão');
-  assert.match(create, /\(\) => \{\s*if \(!wc\.isDestroyed\(\)\) wc\.loadURL\(proxyBlockedPage\(\)\)/);
+  assert.ok(create.indexOf('proxyManager.applyToSession(wc.session).then(') < create.indexOf('loadPanel(entry)'));
+  const sync = main.slice(main.indexOf('function syncViews('), main.indexOf('function applyLayout('));
+  assert.match(sync, /v\.url = p\.url;\s*runtime\.delete\(p\.id\);\s*loadPanel\(v\);/);
+  assert.match(main, /if \(wc\.isCrashed\(\) \|\| wc\.getURL\(\)\.startsWith\('data:'\)\) loadPanel\(v\);\s*else wc\.reload\(\);/);
+  assert.match(main, /if \(failed\.has\(wc\.session\)\) wc\.loadURL\(proxyBlockedPage\(\)\)\.catch\(\(\) => \{\}\);\s*else loadPanel\(v\);/);
   // Popups de login usam a mesma partição (e portanto o mesmo proxy) da conta.
   assert.match(create, /webPreferences: \{ partition, sandbox: true, contextIsolation: true \}/);
   // O config:set da interface não muda o proxy por fora do proxy:save.
@@ -271,7 +278,7 @@ test('main.js: tela de jogo só carrega o jogo depois do proxy aplicado; se falh
 
 test('login: usuário e senha só para o proxy configurado, e com limite de tentativas', async (t) => {
   const { m, sec } = makeManager(t, { settings: { ...ON, username: USUARIO } });
-  await sec.set(SENHA);
+  await sec.set(SENHA, { ...ON, username: USUARIO });
   const ours = { isProxy: true, host: 'proxy.exemplo.com', port: 8080, scheme: 'basic' };
   assert.deepEqual(m.credentialsFor(ours, 'tela-1'), { username: USUARIO, password: SENHA });
   assert.equal(m.credentialsFor({ ...ours, isProxy: false }, 'tela-1'), null, 'login de site não recebe a senha do proxy');
@@ -321,11 +328,11 @@ test('salvar: guarda a senha fora do config.json, não reexibe e informa onde fi
   // Carregar de novo (app reiniciado) devolve a mesma senha.
   const again = new ProxySecret(dir, { safeStorage: fakeSafeStorage(), platform: 'linux' });
   await again.load();
-  assert.equal(again.get(), SENHA);
+  assert.equal(again.getFor({ ...ON, username: USUARIO }), SENHA);
 
   // Campo vazio mantém a senha; nada mudou = não recarrega as telas.
   assert.equal((await m.save({ ...ON, username: USUARIO, password: '' })).changed, false);
-  assert.equal(sec.get(), SENHA);
+  assert.equal(sec.getFor({ ...ON, username: USUARIO }), SENHA);
   // Apagar a senha exige outra (usuário sem senha não fecha).
   assert.equal((await m.save({ ...ON, username: USUARIO, clearPassword: true })).ok, false);
   // Tirar o usuário apaga a senha guardada.
@@ -338,7 +345,7 @@ test('senha: no Linux sem chaveiro (basic_text) fica num arquivo 600, em base64,
   for (const ss of [fakeSafeStorage({ backend: 'basic_text' }), fakeSafeStorage({ available: false }), null]) {
     const dir = tmpDir(t);
     const sec = new ProxySecret(dir, { safeStorage: ss, platform: 'linux' });
-    await sec.set(SENHA);
+    await sec.set(SENHA, { ...ON, username: USUARIO });
     const raw = fs.readFileSync(path.join(dir, FILE_NAME), 'utf8');
     assert.equal(JSON.parse(raw).modo, 'arquivo');
     assert.ok(!raw.includes(SENHA));
@@ -348,17 +355,17 @@ test('senha: no Linux sem chaveiro (basic_text) fica num arquivo 600, em base64,
     assert.match(info.storageLabel, /não é criptografia/);
     const again = new ProxySecret(dir, { safeStorage: ss, platform: 'linux' });
     await again.load();
-    assert.equal(again.get(), SENHA);
+    assert.equal(again.getFor({ ...ON, username: USUARIO }), SENHA);
   }
 });
 
 test('senha: Windows usa o safeStorage (DPAPI); senha ilegível vira aviso, não erro com a senha', async (t) => {
   const dir = tmpDir(t);
-  await new ProxySecret(dir, { safeStorage: fakeSafeStorage({ backend: 'unknown' }), platform: 'win32' }).set(SENHA);
+  await new ProxySecret(dir, { safeStorage: fakeSafeStorage({ backend: 'unknown' }), platform: 'win32' }).set(SENHA, { ...ON, username: USUARIO });
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir, FILE_NAME), 'utf8')).modo, 'safeStorage');
   const broken = new ProxySecret(dir, { safeStorage: fakeSafeStorage({ failDecrypt: true }), platform: 'win32' });
   await broken.load();
-  assert.equal(broken.get(), '');
+  assert.equal(broken.has(), false);
   assert.equal((await broken.info()).unreadable, true);
 });
 
@@ -402,7 +409,7 @@ test('Testar proxy: mostra o IP de saída visto pelo serviço, pelo proxy do for
     body: JSON.stringify({ ip: '203.0.113.7', country: 'BR', city: 'São Paulo', org: 'AS0 Provedor Residencial' }),
   }));
   const { m, sec } = makeManager(t, { net, ses });
-  await sec.set(SENHA);
+  await sec.set(SENHA, { ...ON, username: USUARIO });
   const r = await m.test({ type: 'http', host: 'proxy.exemplo.com', port: '8080', username: USUARIO, password: '' });
   assert.deepEqual(r, { ok: true, ip: '203.0.113.7', country: 'BR', region: undefined, city: 'São Paulo', org: 'AS0 Provedor Residencial', servico: 'ipinfo.io' });
   assert.deepEqual(ses.calls[0], ['setProxy', proxy.sessionProxyConfig(ON)], 'o teste usa uma sessão própria com o proxy');
@@ -496,4 +503,79 @@ test('interface: o campo de senha nunca é preenchido com a senha salva', () => 
   assert.doesNotMatch(ui, /p-pass[^\n]*\.value\s*=/, 'nada escreve no campo de senha');
   const preload = fs.readFileSync(path.join(SRC, 'preload-shell.js'), 'utf8');
   assert.match(preload, /proxyInfo: \(\) => ipcRenderer\.invoke\('proxy:info'\)/);
+});
+
+// ---------- senha presa ao proxy em que foi digitada (revisão da Nina) ----------
+
+test('senha: mudar tipo, host, porta ou usuário com a senha em branco pede a senha de novo', async (t) => {
+  const { m, sec, get } = makeManager(t);
+  assert.equal((await m.save({ ...ON, username: USUARIO, password: SENHA })).ok, true);
+  for (const change of [{ host: 'outro.exemplo.com' }, { port: 3128 }, { type: 'https' }, { username: 'outro-usuario' }]) {
+    const r = await m.save({ ...ON, username: USUARIO, password: '', ...change });
+    assert.deepEqual(r, { ok: false, field: 'password', error: proxy.REBIND_ERROR }, JSON.stringify(change));
+    assert.deepEqual(get(), { ...ON, username: USUARIO }, 'nada foi salvo');
+  }
+  // Com a senha digitada de novo, o destino novo vale e a senha fica presa a ele.
+  const outro = { ...ON, host: 'outro.exemplo.com', username: USUARIO };
+  assert.equal((await m.save({ ...outro, password: 'outra-senha-de-teste' })).ok, true);
+  assert.equal(sec.getFor(outro), 'outra-senha-de-teste');
+  assert.equal(sec.getFor({ ...ON, username: USUARIO }), '');
+});
+
+test('senha: "Testar proxy" com outro destino não usa a senha salva', async (t) => {
+  const net = fakeNet(() => ({ login: { isProxy: true, host: 'outro.exemplo.com', port: 8080 }, body: '{"ip":"203.0.113.9"}' }));
+  const { m, sec } = makeManager(t, { net, ses: fakeSession() });
+  await sec.set(SENHA, { ...ON, username: USUARIO });
+  const r = await m.test({ type: 'http', host: 'outro.exemplo.com', port: 8080, username: USUARIO, password: '' });
+  assert.deepEqual(r, { ok: false, field: 'password', error: proxy.REBIND_ERROR });
+  assert.equal(net.seen.length, 0, 'nenhuma requisição saiu');
+});
+
+test('senha: config.json editado à mão para outro proxy não recebe a senha salva', async (t) => {
+  const { m, sec } = makeManager(t, { settings: { ...ON, host: 'outro.exemplo.com', username: USUARIO } });
+  await sec.set(SENHA, { ...ON, username: USUARIO });
+  assert.equal(m.credentialsFor({ isProxy: true, host: 'outro.exemplo.com', port: 8080 }, 'tela-1'), null);
+  assert.equal((await sec.info({ ...ON, host: 'outro.exemplo.com', username: USUARIO })).hasPassword, false);
+  assert.equal((await sec.info({ ...ON, username: USUARIO })).hasPassword, true);
+});
+
+test('senha: o arquivo guarda o destino; sem destino (ou sem usuário) a senha não é usada', async (t) => {
+  const dir = tmpDir(t);
+  const sec = new ProxySecret(dir, { safeStorage: null, platform: 'linux' });
+  await assert.rejects(sec.set(SENHA, { ...ON }), /sem destino/);
+  await sec.set(SENHA, { ...ON, username: USUARIO, enabled: false });
+  const data = JSON.parse(fs.readFileSync(path.join(dir, FILE_NAME), 'utf8'));
+  assert.deepEqual(data.destino, { type: 'http', host: 'proxy.exemplo.com', port: 8080, username: USUARIO });
+  delete data.destino;
+  fs.writeFileSync(path.join(dir, FILE_NAME), JSON.stringify(data));
+  const again = new ProxySecret(dir, { safeStorage: null, platform: 'linux' });
+  await again.load();
+  assert.equal(again.has(), false);
+  assert.equal(again.unreadable, true);
+});
+
+test('senha: trocar para outro destino sem usuário apaga a senha antiga', async (t) => {
+  const { m, sec } = makeManager(t);
+  await m.save({ ...ON, username: USUARIO, password: SENHA });
+  assert.equal((await m.save({ ...ON, host: 'outro.exemplo.com' })).ok, true);
+  assert.equal(sec.has(), false);
+});
+
+// ---------- proxy inválido continua bloqueado depois de reiniciar (revisão da Nina) ----------
+
+test('config.json: proxy inválido gravado continua inválido nas próximas leituras, até um Salvar válido', async (t) => {
+  const metas = plugins.meta();
+  for (const bad of [{ ...ON, type: 'socks4' }, { ...ON, type: 42 }, { ...ON, username: 'a\nb' }]) {
+    let cfg = normalizeConfig({ proxy: bad }, metas);
+    for (let i = 0; i < 3; i++) {
+      cfg = normalizeConfig(JSON.parse(JSON.stringify(cfg)), metas); // gravou e leu de novo (reinício)
+      assert.equal(cfg.proxy.invalid, true, `${JSON.stringify(bad)} leitura ${i + 2}`);
+      assert.throws(() => proxy.sessionProxyConfig(cfg.proxy));
+    }
+  }
+  // Salvar pela tela com dados válidos tira a marca.
+  const { m, get } = makeManager(t, { settings: { ...ON, invalid: true } });
+  const r = await m.save(ON);
+  assert.equal(r.changed, true);
+  assert.equal(get().invalid, undefined);
 });
