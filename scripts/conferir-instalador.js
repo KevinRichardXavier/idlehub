@@ -12,25 +12,13 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-// Lê só os campos do latest.yml que importam aqui. O formato é o do electron-builder:
-// version, path e sha512 no topo, e a lista files com url, sha512 e size.
-function lerLatestYml(texto) {
-  const topo = {};
-  const files = [];
-  let atual = null;
-  for (const linha of texto.split(/\r?\n/)) {
-    let m;
-    if ((m = linha.match(/^ {2}- (\w+): (.*)$/))) {
-      atual = { [m[1]]: m[2].trim() };
-      files.push(atual);
-    } else if ((m = linha.match(/^ {4}(\w+): (.*)$/)) && atual) {
-      atual[m[1]] = m[2].trim();
-    } else if ((m = linha.match(/^(\w+):(?: (.*))?$/))) {
-      atual = null;
-      if (m[2] !== undefined) topo[m[1]] = m[2].trim().replace(/^'(.*)'$/, '$1');
-    }
-  }
-  return { ...topo, files };
+// O latest.yml é lido com a mesma função do electron-updater do app instalado (parseUpdateInfo,
+// js-yaml estrito: chave duplicada ou YAML inválido reprovam aqui como reprovariam no app) e a
+// lista de arquivos sai do mesmo getFileList que ele usa para escolher o que baixar.
+const { parseUpdateInfo, getFileList } = require('electron-updater/out/providers/Provider');
+
+function lerLatestYml(texto, origem = 'latest.yml') {
+  return parseUpdateInfo(texto, 'latest.yml', origem);
 }
 
 function sha512Base64(arquivo) {
@@ -49,20 +37,33 @@ function conferirInstalador(pastaDist, versao) {
   }
   if (problemas.length) return { ok: false, problemas };
 
-  const info = lerLatestYml(fs.readFileSync(yml, 'utf8'));
+  let info;
+  try {
+    info = lerLatestYml(fs.readFileSync(yml, 'utf8'), yml);
+  } catch (err) {
+    return { ok: false, problemas: [`latest.yml que o atualizador recusa: ${String(err.message).split('\n')[0]}`] };
+  }
+  if (!info || typeof info !== 'object') return { ok: false, problemas: ['latest.yml vazio ou sem campos'] };
   const sha = sha512Base64(exe);
-  const tamanho = String(fs.statSync(exe).size);
+  const tamanho = fs.statSync(exe).size;
 
-  if (info.version !== versao) problemas.push(`latest.yml diz versão ${info.version}, esperado ${versao}`);
+  if (String(info.version) !== versao) problemas.push(`latest.yml diz versão ${info.version}, esperado ${versao}`);
   if (info.path !== nomeExe) problemas.push(`latest.yml aponta para ${info.path}, esperado ${nomeExe}`);
   if (info.sha512 !== sha) problemas.push('sha512 do latest.yml não bate com o .exe');
-  const entrada = info.files.find((f) => f.url === nomeExe);
+  let arquivos = [];
+  try {
+    arquivos = getFileList(info);
+  } catch {
+    arquivos = [];
+  }
+  const entrada = arquivos.find((f) => f.url === nomeExe);
   if (!entrada) problemas.push(`latest.yml não lista ${nomeExe} em files`);
   else {
     if (entrada.sha512 !== sha) problemas.push(`sha512 de ${nomeExe} em files não bate com o .exe`);
-    if (entrada.size !== tamanho) problemas.push(`tamanho de ${nomeExe} em files não bate com o .exe`);
+    if (Number(entrada.size) !== tamanho) problemas.push(`tamanho de ${nomeExe} em files não bate com o .exe`);
   }
-  return { ok: problemas.length === 0, problemas, sha512: sha, tamanho: Number(tamanho) };
+  if (arquivos.length !== 1) problemas.push(`latest.yml lista ${arquivos.length} arquivos em files, esperado só o instalador`);
+  return { ok: problemas.length === 0, problemas, sha512: sha, tamanho };
 }
 
 module.exports = { lerLatestYml, conferirInstalador };
