@@ -27,6 +27,8 @@ const WEBRTC_POLICY_OFF = 'default';
 const SOCKS_AUTH_ERROR =
   'O Chromium (motor do Electron) não suporta socks5 com usuário e senha. Use o endereço http ou https do ' +
   'seu provedor, ou libere o IP desta máquina no painel do provedor e deixe usuário e senha vazios.';
+const REBIND_ERROR =
+  'O tipo, o host, a porta ou o usuário do proxy mudou: digite a senha de novo. A senha salva só vale para o proxy em que foi digitada.';
 
 function defaultProxy() {
   return { enabled: false, type: 'http', host: '', port: 0, username: '' };
@@ -118,7 +120,9 @@ function normalizeProxy(raw) {
   if (enabled) {
     const typeOk = PROXY_TYPES.includes(src.type);
     const userOk = (src.username ?? '') === username;
-    if (!typeOk || !host || !port || !userOk || (type === 'socks5' && username)) out.invalid = true;
+    // `invalid` gravado antes continua valendo: a normalização troca um tipo desconhecido por http, e sem
+    // isso a próxima leitura aceitaria o proxy "consertado" sozinho. Só o Salvar (validateProxy) limpa.
+    if (!typeOk || !host || !port || !userOk || (type === 'socks5' && username) || src.invalid === true) out.invalid = true;
   }
   return out;
 }
@@ -142,6 +146,12 @@ const webRtcPolicy = (p) => (p && p.enabled ? WEBRTC_POLICY_ON : WEBRTC_POLICY_O
 
 const sameSettings = (a, b) =>
   ['enabled', 'type', 'host', 'port', 'username', 'invalid'].every((k) => (a?.[k] ?? null) === (b?.[k] ?? null));
+
+// Mesmo destino para a senha salva: tipo, host, porta e usuário. A senha só vale para o proxy em que foi
+// digitada; mudar qualquer um desses exige digitá-la de novo (nunca vai para outro servidor).
+const DEST_KEYS = ['type', 'host', 'port', 'username'];
+const destinationOf = (p) => Object.fromEntries(DEST_KEYS.map((k) => [k, p?.[k] ?? null]));
+const sameDestination = (a, b) => !!a && !!b && DEST_KEYS.every((k) => (a[k] ?? null) === (b[k] ?? null));
 
 // O pedido de login veio do proxy que o app configurou? (Nunca entrega a senha a outro servidor.)
 function isOurProxy(p, authInfo) {
@@ -245,6 +255,7 @@ module.exports = {
   WEBRTC_POLICY_ON,
   WEBRTC_POLICY_OFF,
   SOCKS_AUTH_ERROR,
+  REBIND_ERROR,
   defaultProxy,
   normalizeHost,
   normalizePort,
@@ -254,6 +265,8 @@ module.exports = {
   sessionProxyConfig,
   webRtcPolicy,
   sameSettings,
+  destinationOf,
+  sameDestination,
   isOurProxy,
   AuthGate,
   redact,

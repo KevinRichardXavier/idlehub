@@ -11,10 +11,15 @@
 //   "arquivo": a senha só em base64 (isso NÃO é criptografia, só evita lê-la sem querer num `cat`), e a
 //   proteção real é a permissão 600 dentro da pasta pessoal do usuário que roda o app.
 //
+// A senha fica presa ao destino em que foi digitada (tipo, host, porta e usuário, gravados em "destino",
+// que não é segredo). `getFor(p)` só a devolve se `p` for esse mesmo destino: mudar o endereço no
+// config.json ou na tela não faz a senha ir para outro servidor.
+//
 // A senha nunca vai para o config.json, para a interface, para logs nem para o Discord.
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { destinationOf, sameDestination } = require('./proxy');
 
 const FILE_NAME = 'proxy-senha.json';
 const NO_KEYRING_BACKENDS = ['basic_text', 'unknown'];
@@ -35,6 +40,7 @@ class ProxySecret {
     this.safeStorage = safeStorage;
     this.platform = platform;
     this.value = '';
+    this.dest = null;
     this.unreadable = false;
     this.mode = null;
   }
@@ -58,6 +64,7 @@ class ProxySecret {
 
   async load() {
     this.value = '';
+    this.dest = null;
     this.unreadable = false;
     let data;
     try {
@@ -77,25 +84,36 @@ class ProxySecret {
       } else {
         throw new Error('modo desconhecido');
       }
+      if (!data.destino || typeof data.destino !== 'object') throw new Error('sem destino');
+      this.dest = destinationOf(data.destino);
     } catch {
       this.value = '';
+      this.dest = null;
       this.unreadable = true;
     }
   }
 
-  get() {
-    return this.value;
-  }
-
+  // Há alguma senha guardada (de qualquer destino)?
   has() {
     return !!this.value;
   }
 
-  async set(password) {
+  // A senha, só se `p` for o destino em que ela foi salva.
+  getFor(p) {
+    return this.value && sameDestination(this.dest, destinationOf(p)) ? this.value : '';
+  }
+
+  hasFor(p) {
+    return !!this.getFor(p);
+  }
+
+  // `dest`: o proxy (tipo, host, porta, usuário) a que esta senha pertence.
+  async set(password, dest) {
     if (!password) return this.clear();
+    if (!dest || !dest.host || !dest.port || !dest.username) throw new Error('senha sem destino');
     const mode = await this.pickMode();
     const buf = mode === 'safeStorage' ? await this.safeStorage.encryptStringAsync(password) : Buffer.from(password, 'utf8');
-    const body = JSON.stringify({ versao: 1, modo: mode, dados: buf.toString('base64') });
+    const body = JSON.stringify({ versao: 1, modo: mode, destino: destinationOf(dest), dados: buf.toString('base64') });
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
     const tmp = `${this.file}.tmp`;
     fs.rmSync(tmp, { force: true });
@@ -107,17 +125,20 @@ class ProxySecret {
       /* Windows: a pasta do usuário já é privada */
     }
     this.value = password;
+    this.dest = destinationOf(dest);
     this.unreadable = false;
   }
 
   clear() {
     fs.rmSync(this.file, { force: true });
     this.value = '';
+    this.dest = null;
     this.unreadable = false;
   }
 
-  // O que a interface pode saber (nunca a senha).
-  async info() {
+  // O que a interface pode saber (nunca a senha). `p`: o proxy configurado; a senha só conta como salva
+  // se for desse destino.
+  async info(p) {
     let stored = null;
     try {
       stored = JSON.parse(fs.readFileSync(this.file, 'utf8')).modo || null;
@@ -126,7 +147,7 @@ class ProxySecret {
     }
     const mode = stored || (await this.pickMode());
     return {
-      hasPassword: this.has(),
+      hasPassword: p ? this.hasFor(p) : this.has(),
       unreadable: this.unreadable,
       storage: mode,
       storageLabel: STORAGE_LABELS[mode] || mode,

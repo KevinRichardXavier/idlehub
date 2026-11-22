@@ -14,6 +14,7 @@ const {
   sessionProxyConfig,
   sameSettings,
   isOurProxy,
+  REBIND_ERROR,
   AuthGate,
   describeError,
   parseIpEcho,
@@ -84,7 +85,7 @@ class ProxyManager {
   credentialsFor(authInfo, key = 'sem-tela') {
     const p = this.settings();
     if (!isOurProxy(p, authInfo)) return null;
-    const password = this.secret.get();
+    const password = this.secret.getFor(p); // só a senha salva para este mesmo proxy e usuário
     if (!p.username || !password) return null;
     if (!this.gate.allow(key)) return null;
     return { username: p.username, password };
@@ -94,21 +95,35 @@ class ProxyManager {
     return this.gate.refused;
   }
 
+  // Valida o formulário considerando a senha salva só se ela for do mesmo destino (tipo, host, porta e
+  // usuário). Destino diferente com senha em branco = pedir a senha de novo.
+  validate(input, { requireEnabled = false } = {}) {
+    const opts = { requireEnabled };
+    const draft = validateProxy(input, { ...opts, hasSavedPassword: true });
+    if (!draft.ok) return draft;
+    const savedOk = input?.clearPassword !== true && this.secret.hasFor(draft.value);
+    const res = validateProxy(input, { ...opts, hasSavedPassword: savedOk });
+    if (!res.ok && res.field === 'password' && this.secret.has() && !savedOk && input?.clearPassword !== true)
+      return { ok: false, field: 'password', error: REBIND_ERROR };
+    return res.ok ? { ...res, savedPassword: savedOk ? this.secret.getFor(res.value) : '' } : res;
+  }
+
   // Salva o que veio da tela de configurações. Retorna { ok, changed, settings } ou { ok: false, field, error }.
   async save(input) {
-    const res = validateProxy(input, { hasSavedPassword: this.secret.has() });
+    const res = this.validate(input);
     if (!res.ok) return res;
     const next = res.value;
     const before = this.settings();
     const typed = typeof input.password === 'string' ? input.password : '';
     let passwordChanged = false;
-    if (!next.username || input.clearPassword === true) {
-      // Sem usuário não há senha: não fica senha órfã guardada.
-      if (this.secret.has() || this.secret.unreadable) passwordChanged = true;
+    if (next.username && typed) {
+      if (typed !== res.savedPassword) {
+        await this.secret.set(typed, next);
+        passwordChanged = true;
+      }
+    } else if (!res.savedPassword && (this.secret.has() || this.secret.unreadable)) {
+      // Sem usuário, "Apagar a senha salva" ou senha de outro destino: não fica senha órfã guardada.
       this.secret.clear();
-    }
-    if (next.username && typed && typed !== this.secret.get()) {
-      await this.secret.set(typed);
       passwordChanged = true;
     }
     const changed = passwordChanged || !sameSettings(before, next);
@@ -119,15 +134,15 @@ class ProxyManager {
     return { ok: true, changed, settings: next };
   }
 
-  // "Testar proxy": usa os valores do formulário (mesmo antes de salvar). Senha vazia = a senha salva.
+  // "Testar proxy": usa os valores do formulário (mesmo antes de salvar). Senha vazia = a senha salva, só
+  // se o formulário for o mesmo proxy e usuário em que ela foi salva.
   // Retorna { ok: true, ip, country, region, city, org, servico } ou { ok: false, error }.
   async test(input, { ecoUrls = ECO_URLS, timeoutMs = TEST_TIMEOUT_MS } = {}) {
     const typed = typeof input?.password === 'string' ? input.password : '';
-    const saved = input?.clearPassword === true ? '' : this.secret.get();
-    const res = validateProxy({ ...input, enabled: true }, { hasSavedPassword: !!saved, requireEnabled: true });
+    const res = this.validate({ ...input, enabled: true }, { requireEnabled: true });
     if (!res.ok) return { ok: false, field: res.field, error: res.error };
     const p = res.value;
-    const password = typed || saved;
+    const password = typed || res.savedPassword;
     const creds = p.username && password ? { username: p.username, password } : null;
     const secrets = [password, p.username].filter(Boolean);
     if (!this.net || !this.makeTestSession) return { ok: false, error: 'Teste de proxy indisponível.' };
