@@ -16,13 +16,13 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const requestGate = require('./request-gate');
 
 const FLAG = '--teste-fumaca';
 const TIMEOUT_MS = 110000;
 const PANEL_MS = 55000; // até a tela de jogo de teste ficar pronta; o resto do tempo é da parte do proxy
 const POLL_MS = 250;
 const RESULT_PREFIX = 'IDLEHUB_FUMACA';
-const BLOCKED_URLS = ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'];
 // Página local da tela de jogo de teste. O host é o de um jogo com plugin para o preload resolver o plugin
 // pelo endereço, como faz com o jogo de verdade; o conteúdo vem do próprio app, nunca da rede.
 const TEST_SCHEME = 'idlehub-fumaca';
@@ -140,11 +140,12 @@ function setup(app, plugin) {
     blocked.push(redactUrl(url));
     throw new Error('rede bloqueada no teste de fumaça');
   };
+  // Pelo request-gate: o bloqueio do proxy usa o mesmo ouvinte da sessão e não pode apagar este.
   const guard = (ses) =>
-    ses.webRequest.onBeforeRequest({ urls: BLOCKED_URLS }, (details, cb) => {
-      if (allowed.some((o) => details.url.startsWith(`${o}/`))) return cb({});
+    requestGate.setBlocker(ses, 'teste-de-fumaca', (details) => {
+      if (allowed.some((o) => details.url.startsWith(`${o}/`))) return false;
       blocked.push(redactUrl(details.url));
-      cb({ cancel: true });
+      return true;
     });
   app.on('session-created', (ses) => {
     guard(ses);

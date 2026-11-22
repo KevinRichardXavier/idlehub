@@ -41,14 +41,31 @@ function fakeSafeStorage({ available = true, backend = 'gnome_libsecret', failDe
   };
 }
 
+// Sessão falsa. `request(url)` simula uma requisição de rede nova da sessão passando pelo onBeforeRequest
+// registrado (se houver): devolve 'cancelada' ou 'livre'.
 function fakeSession() {
   const calls = [];
-  return {
+  const s = {
     calls,
+    listeners: 0,
     setProxy: async (cfg) => calls.push(['setProxy', cfg]),
     closeAllConnections: async () => calls.push(['closeAllConnections']),
     clearAuthCache: async () => calls.push(['clearAuthCache']),
+    webRequest: {
+      onBeforeRequest: (filter, fn) => {
+        s.listeners++;
+        s.filter = filter;
+        s.listener = fn;
+      },
+    },
+    request(url) {
+      if (!s.listener) return 'livre';
+      let out = null;
+      s.listener({ url }, (r) => (out = r));
+      return out && out.cancel ? 'cancelada' : 'livre';
+    },
   };
+  return s;
 }
 
 function makeManager(t, { settings = proxy.defaultProxy(), secret, net, ses, log } = {}) {
@@ -232,9 +249,24 @@ test('sessões: proxy ligado e inválido não é aplicado; a sessão inteira fic
     [['setProxy', proxy.BLOCK_CONFIG], ['closeAllConnections']],
     'nem "system" nem a rota anterior: só o bloqueio, e as conexões abertas caem',
   );
+  assert.equal(m.isBlocked(s), true);
+  assert.equal(s.request('http://jogo.example/'), 'cancelada', 'nenhuma requisição nova sai da sessão');
   s.calls.length = 0;
   assert.deepEqual(await m.applyLive([s]), [s], 'a sessão volta como falha e a tela vai para a página sem conexão');
   assert.deepEqual(s.calls, [['setProxy', proxy.BLOCK_CONFIG], ['closeAllConnections'], ['clearAuthCache']]);
+});
+
+test('sessões: o bloqueio só sai quando uma regra válida é aplicada com sucesso', async (t) => {
+  let current = { ...ON, invalid: true };
+  const m = new ProxyManager({ secret: { getFor: () => '', has: () => false }, getSettings: () => current, setSettings: () => {} });
+  const s = fakeSession();
+  await assert.rejects(m.applyToSession(s));
+  assert.equal(s.request('wss://jogo.example/socket'), 'cancelada');
+  current = ON;
+  await m.applyToSession(s);
+  assert.equal(m.isBlocked(s), false);
+  assert.equal(s.request('wss://jogo.example/socket'), 'livre');
+  assert.equal(s.listeners, 1, 'um único ouvinte por sessão');
 });
 
 test('sessões: o bloqueio não tem saída direta nem exceção', () => {
@@ -274,6 +306,32 @@ test('sessões: se nem o bloqueio entra, ainda derruba as conexões e esquece a 
   };
   assert.deepEqual(await m.applyLive([s]), [s]);
   assert.deepEqual(s.calls, [['closeAllConnections'], ['clearAuthCache']]);
+  // A regra anterior continua no Chromium, mas nenhuma requisição nova da sessão sai (telas, popups e
+  // páginas de fundo de extensão usam o mesmo ouvinte da sessão).
+  assert.equal(m.isBlocked(s), true);
+  for (const url of ['http://jogo.example/', 'https://discord.com/oauth2', 'ws://jogo.example/', 'wss://jogo.example/'])
+    assert.equal(s.request(url), 'cancelada', url);
+});
+
+test('request-gate: bloqueadores de chaves diferentes convivem num só ouvinte da sessão', () => {
+  const gate = require('../src/request-gate');
+  const s = fakeSession();
+  gate.setBlocker(s, 'fumaca', (d) => !d.url.startsWith('http://127.0.0.1:1/'));
+  gate.setBlocker(s, 'proxy', () => true);
+  assert.equal(s.listeners, 1);
+  assert.deepEqual(s.filter, { urls: gate.NETWORK_URLS });
+  assert.equal(s.request('http://127.0.0.1:1/x'), 'cancelada', 'o bloqueio do proxy vale mesmo para o que a fumaça libera');
+  gate.removeBlocker(s, 'proxy');
+  assert.equal(s.request('http://127.0.0.1:1/x'), 'livre');
+  assert.equal(s.request('https://exemplo.com/'), 'cancelada', 'tirar o bloqueio do proxy não apaga o da fumaça');
+  assert.equal(gate.hasBlocker(s, 'fumaca'), true);
+});
+
+test('request-gate: nenhum código registra onBeforeRequest por fora dele', () => {
+  for (const f of fs.readdirSync(SRC).filter((n) => n.endsWith('.js') && n !== 'request-gate.js')) {
+    const code = fs.readFileSync(path.join(SRC, f), 'utf8');
+    assert.ok(!/webRequest\.onBeforeRequest/.test(code), `${f} registra onBeforeRequest direto (o Electron guarda um só por sessão)`);
+  }
 });
 
 test('sessões: aplicações em sequência terminam na última configuração pedida', async (t) => {
@@ -313,7 +371,7 @@ test('main.js: tela de jogo só carrega o jogo depois do proxy aplicado; se falh
   assert.ok(live.indexOf('await Promise.all(loads);') < live.indexOf('return list.length;'));
   const close = main.slice(main.indexOf('function closePopupsOf('), main.indexOf('function loadPanel('));
   assert.match(close, /panelWcs\.has\(wc\) \|\| !sessions\.has\(wc\.session\) \|\| wc\.getType\(\) !== 'window'/);
-  assert.match(close, /if \(popup && popup !== win\) popup\.close\(\);/);
+  assert.match(close, /if \(popup && popup !== win\) popup\.destroy\(\);/, 'destroy: o beforeunload não cancela');
   // Popups de login usam a mesma partição (e portanto o mesmo proxy) da conta.
   assert.match(create, /webPreferences: \{ partition, sandbox: true, contextIsolation: true \}/);
   // O config:set da interface não muda o proxy por fora do proxy:save.

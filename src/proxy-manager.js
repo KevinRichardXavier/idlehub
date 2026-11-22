@@ -21,6 +21,10 @@ const {
   parseIpEcho,
   proxyRules,
 } = require('./proxy');
+const defaultRequestGate = require('./request-gate');
+
+// Chave do bloqueio do proxy no request-gate (src/request-gate.js).
+const BLOCK_KEY = 'proxy-sem-regra';
 
 const ECO_URLS = ['https://ipinfo.io/json', 'https://api.ipify.org?format=json'];
 const TEST_TIMEOUT_MS = 15000;
@@ -30,7 +34,17 @@ class ProxyManager {
   // secret: ProxySecret. getSettings/setSettings: lê e grava config.proxy. net: o `net` do Electron.
   // makeTestSession: devolve a sessão temporária do "Testar proxy". log: só para diagnóstico, nunca recebe
   // usuário nem senha.
-  constructor({ secret, getSettings, setSettings, net = null, makeTestSession = null, log = () => {}, gate = new AuthGate() }) {
+  constructor({
+    secret,
+    getSettings,
+    setSettings,
+    net = null,
+    makeTestSession = null,
+    log = () => {},
+    gate = new AuthGate(),
+    requestGate = defaultRequestGate,
+  }) {
+    this.requestGate = requestGate;
     this.secret = secret;
     this.getSettings = getSettings;
     this.setSettings = setSettings;
@@ -54,8 +68,8 @@ class ProxyManager {
 
   // Aplica a configuração atual numa sessão. Se não der (proxy ligado mas inválido, ou o setProxy falhou), a
   // sessão inteira é bloqueada antes de rejeitar: a configuração anterior da sessão continuaria valendo para
-  // tudo o que usa a mesma partição (popups de login inclusos), então ela é trocada pelo BLOCK_CONFIG e as
-  // conexões abertas são derrubadas. Quem chama não pode carregar a tela nesse caso.
+  // tudo o que usa a mesma partição (popups de login e páginas de fundo de extensão inclusos). Quem chama
+  // não pode carregar a tela nesse caso. O bloqueio só sai quando uma regra é aplicada com sucesso.
   applyToSession(ses) {
     return this.serial(async () => {
       let cfg;
@@ -66,24 +80,38 @@ class ProxyManager {
         await this.blockSession(ses);
         throw err;
       }
+      this.requestGate.removeBlocker(ses, BLOCK_KEY);
       this.log(`[proxy] sessão: ${cfg.mode === 'fixed_servers' ? cfg.proxyRules : cfg.mode}`);
       return cfg;
     });
   }
 
-  // Melhor esforço: cada passo é tentado mesmo se o anterior falhar.
+  // Bloqueia a sessão em três camadas, cada uma tentada mesmo se a anterior falhar:
+  // 1. cancela toda requisição de rede nova da sessão (request-gate), o que não depende do setProxy;
+  // 2. troca a regra de proxy pelo BLOCK_CONFIG (proxy local inexistente, sem saída direta);
+  // 3. derruba as conexões já abertas, que ainda usavam a rota anterior.
   async blockSession(ses) {
     try {
-      await ses.setProxy(BLOCK_CONFIG);
-      this.log('[proxy] sessão bloqueada: o proxy não pôde ser aplicado');
+      this.requestGate.setBlocker(ses, BLOCK_KEY, () => true);
     } catch {
-      this.log('[proxy] não deu para bloquear a sessão; as janelas dela serão fechadas');
+      this.log('[proxy] não deu para barrar as requisições da sessão');
+    }
+    try {
+      await ses.setProxy(BLOCK_CONFIG);
+    } catch {
+      this.log('[proxy] não deu para trocar a regra da sessão pelo bloqueio');
     }
     try {
       await ses.closeAllConnections();
     } catch {
-      /* segue: as janelas da sessão são fechadas ou levadas à página sem conexão por quem chamou */
+      this.log('[proxy] não deu para derrubar as conexões abertas da sessão');
     }
+    this.log('[proxy] sessão bloqueada: o proxy não pôde ser aplicado');
+  }
+
+  // A sessão está com o bloqueio do proxy (usado pelo teste de fumaça e pelos testes).
+  isBlocked(ses) {
+    return this.requestGate.hasBlocker(ses, BLOCK_KEY);
   }
 
   // Mudança com o app aberto: aplica em cada sessão, derruba as conexões já abertas (que ainda usavam a

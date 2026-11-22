@@ -193,15 +193,17 @@ async function applyProxyLive() {
 }
 
 // Fecha as janelas que não são telas de jogo (popups de login) das sessões em que o proxy não pôde ser
-// aplicado: a sessão já foi bloqueada, e fechar garante que nenhuma página fique aberta na rota antiga.
+// aplicado. A sessão já está bloqueada (nenhuma requisição nova sai, src/request-gate.js); fechar tira da
+// tela o que a página já tinha carregado pela rota anterior.
 function closePopupsOf(sessions) {
   if (!sessions || sessions.size === 0) return;
   const panelWcs = new Set([...views.values()].map((v) => v.view.webContents));
   for (const wc of webContents.getAllWebContents()) {
     // Só janelas: páginas de fundo de extensão ficam (a sessão bloqueada já não as deixa sair).
     if (wc.isDestroyed() || panelWcs.has(wc) || !sessions.has(wc.session) || wc.getType() !== 'window') continue;
+    // destroy(), não close(): o beforeunload da página não pode cancelar o fechamento.
     const popup = BrowserWindow.fromWebContents(wc);
-    if (popup && popup !== win) popup.close();
+    if (popup && popup !== win) popup.destroy();
   }
 }
 
@@ -653,6 +655,7 @@ if (!app.requestSingleInstanceLock()) {
               if (res.ok && res.changed) await applyProxyLive();
               return res;
             },
+            applyLive: applyProxyLive,
             panelWc: () => views.get(testPanelId)?.view.webContents || null,
             ctx: smoke,
           }),

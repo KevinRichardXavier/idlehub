@@ -11,7 +11,8 @@
 // Com o proxy configurado pela mesma função do botão Salvar, a tela de jogo de teste (sandbox: true) abre o
 // endereço do site "direto". Passa se a página vier do proxy, se o login do proxy funcionou pelo evento
 // `login`, se o "Testar proxy" mostrar o IP do proxy, se com o proxy fora do ar a tela ficar sem conexão,
-// se a senha errada não virar laço e se o site "direto" nunca for tocado. Confere também onde a senha ficou
+// se a senha errada não virar laço, se uma falha dupla do setProxy deixar a sessão barrada (popup de login
+// fechado) e se o site "direto" nunca for tocado. Confere também onde a senha ficou
 // guardada e que ela não apareceu na saída do app. A senha é gerada na hora (não é senha de verdade).
 
 const http = require('node:http');
@@ -128,6 +129,70 @@ async function load(wc, url) {
   }
 }
 
+// Espera `cond()` ficar verdadeira (consulta a cada 100 ms) até `ms`; devolve o último valor.
+async function waitFor(cond, ms) {
+  const end = Date.now() + ms;
+  for (;;) {
+    let v = false;
+    try {
+      v = await cond();
+    } catch {
+      v = false;
+    }
+    if (v || Date.now() >= end) return v;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
+// 6. Falha dupla no Chromium de verdade: com um popup de login aberto na sessão da tela (e um beforeunload que
+// tenta impedir o fechamento), o setProxy da sessão passa a falhar sempre, tanto com a regra nova quanto com o
+// bloqueio. A sessão tem de ficar barrada (nenhuma requisição nova sai, nem pela rota anterior, o socks), o
+// popup tem de fechar e, quando o setProxy volta, uma regra válida tira o bloqueio.
+async function doubleFailure({ manager, saveProxy, applyLive, wc, site, sp, sPort }) {
+  const problems = [];
+  const report = {};
+  const r = await saveProxy({ enabled: true, type: 'socks5', host: HOST, port: sPort, username: '', password: '' });
+  if (!r.ok) return { problems: [`falha dupla: não salvou o socks5 (${r.error})`], report };
+
+  const created = new Promise((resolve) => wc.once('did-create-window', (w) => resolve(w)));
+  await wc.executeJavaScript(`window.open(${JSON.stringify(`${site}/popup`)}, '_blank', 'popup,width=420,height=420'); true`, true);
+  const popup = await withTimeout(created, STEP_MS, 'abrir o popup');
+  const pwc = popup.webContents;
+  report.popup = (await waitFor(() => pwc.getTitle() === 'VIA-SOCKS', STEP_MS)) ? 'VIA-SOCKS' : pwc.getTitle();
+  if (report.popup !== 'VIA-SOCKS') problems.push(`falha dupla: o popup não abriu pelo proxy (${report.popup})`);
+  if (pwc.session !== wc.session) problems.push('falha dupla: o popup não usa a sessão da tela');
+  await pwc.executeJavaScript("window.addEventListener('beforeunload', (e) => { e.preventDefault(); e.returnValue = ''; }); true", true);
+
+  const ses = wc.session;
+  const fail = () => Promise.reject(new Error('falha simulada pelo teste de fumaça'));
+  ses.setProxy = fail;
+  if (ses.setProxy !== fail) return { problems: [...problems, 'falha dupla: não deu para simular a falha do setProxy'], report };
+  try {
+    await applyLive();
+    report.bloqueada = manager.isBlocked(ses);
+    if (!report.bloqueada) problems.push('falha dupla: a sessão não ficou bloqueada');
+    report.popupFechado = await waitFor(() => pwc.isDestroyed(), 3000);
+    if (!report.popupFechado) problems.push('falha dupla: o popup de login (com beforeunload) continuou aberto');
+    const before = sp.hits;
+    const page = await load(wc, `${site}/pagina`);
+    report.pagina = page;
+    if (page.ok || !/BLOCKED_BY_CLIENT/.test(String(page.code)))
+      problems.push(`falha dupla: esperava ERR_BLOCKED_BY_CLIENT, veio ${JSON.stringify(page)}`);
+    report.saidasPelaRotaAnterior = sp.hits - before;
+    if (sp.hits !== before) problems.push('falha dupla: a tela saiu pela rota anterior (socks)');
+  } finally {
+    delete ses.setProxy;
+  }
+
+  await manager.applyToSession(ses);
+  report.desbloqueada = !manager.isBlocked(ses);
+  const back = await load(wc, `${site}/pagina`);
+  report.depois = back;
+  if (!report.desbloqueada || back.title !== 'VIA-SOCKS')
+    problems.push(`falha dupla: com o setProxy de volta, a regra válida não tirou o bloqueio (${JSON.stringify(back)})`);
+  return { problems, report };
+}
+
 // Guarda tudo o que o app escreve na saída, para conferir que nenhuma senha apareceu.
 function captureOutput() {
   const chunks = [];
@@ -153,10 +218,10 @@ function captureOutput() {
 }
 
 // manager: ProxyManager. saveProxy(input): o mesmo caminho do botão Salvar (valida, guarda e reaplica nas
-// sessões abertas, recarregando as telas). panelWc(): webContents da tela de jogo de teste. dir: pasta de dados
+// sessões abertas, recarregando as telas). applyLive(): a reaplicação ao vivo do main.js, sozinha. panelWc(): webContents da tela de jogo de teste. dir: pasta de dados
 // (temporária). ctx: contexto do teste de fumaça (allowed = origens locais liberadas na trava de rede).
 // Retorna { problems, report } (report sem segredo).
-async function run({ manager, saveProxy, panelWc, dir, ctx }) {
+async function run({ manager, saveProxy, applyLive, panelWc, dir, ctx }) {
   const problems = [];
   const report = {};
   const password = crypto.randomBytes(12).toString('hex');
@@ -232,6 +297,11 @@ async function run({ manager, saveProxy, panelWc, dir, ctx }) {
     if (page.ok && page.title !== 'PROXY-407') problems.push(`proxy com senha errada: a tela mostrou ${JSON.stringify(page)}`);
     if (hp.badAuth - before < 1 || hp.badAuth - before > 12)
       problems.push(`proxy com senha errada: ${hp.badAuth - before} tentativas de login (esperava de 1 a 12)`);
+
+    // 6. Falha dupla (setProxy recusado com a regra nova e com o bloqueio).
+    const dupla = await doubleFailure({ manager, saveProxy, applyLive, wc, site, sp, sPort });
+    report.falhaDupla = dupla.report;
+    problems.push(...dupla.problems);
 
     // Nada pode ter chegado direto ao site.
     report.acessosDiretos = direct.hits;
