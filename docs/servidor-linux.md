@@ -33,7 +33,8 @@ O que vai ficar montado:
   hospedagem, diferente do IP da sua casa. Sites e proteções como o Cloudflare costumam desconfiar mais
   desse tipo de IP (desafios, captchas, bloqueios), e a mesma conta aparecendo de dois IPs diferentes pode
   chamar atenção. Não sabemos como o Pokeidle trata isso: as regras que conferimos falam do limite de contas,
-  não de IP. Na dúvida, pergunte ao jogo antes de mover contas para o servidor.
+  não de IP. Na dúvida, pergunte ao jogo antes de mover contas para o servidor. Se o jogo bloquear o IP do
+  servidor, dá para usar um proxy residencial: veja [Proxy residencial (pela tela)](#proxy-residencial-pela-tela).
 
 ---
 
@@ -248,6 +249,25 @@ contém a URL do webhook do Discord, que é segredo. Se quiser tirar também o `
 antes se nada mais no servidor usa esses pacotes.
 
 ---
+
+## Proxy residencial (pela tela)
+
+Para as telas de jogo saírem por um proxy em vez do IP do servidor, configure tudo pela tela do app, no
+VNC (passo 6). Não precisa de sudo nem de reiniciar o serviço.
+
+1. Abra ⚙ Configurações › Proxy e marque **Usar proxy nas telas de jogo**.
+2. Escolha o tipo e preencha host e porta do provedor. Com usuário e senha, use o endereço `http` ou `https`
+   do provedor: **`socks5` com senha não funciona** no Chromium. Para `socks5`, libere o IP do servidor no
+   painel do provedor e deixe usuário e senha vazios.
+3. Clique em **Testar proxy**. Deve aparecer o IP de saída pelo proxy, diferente do IP do servidor.
+4. Clique em **Salvar**. Todas as telas recarregam já pelo proxy.
+
+- Se o proxy cair, as telas ficam sem conexão (não saem pelo IP do servidor). Os avisos no Discord continuam,
+  porque ele sai direto.
+- Aqui não há chaveiro, então a senha fica em `/home/idlehub/.config/IdleHub/proxy-senha.json`, com
+  permissão 600, em base64 (**não é criptografia**). Quem tem root no servidor consegue lê-la. Detalhes no
+  [README](../README.md#proxy).
+- O limite de 4 contas continua o mesmo, com ou sem proxy.
 
 ## Problemas comuns
 

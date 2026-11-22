@@ -13,7 +13,7 @@ npm start
 
 Testes: `npm test`. O CI (GitHub Actions, `.github/workflows/ci.yml`) roda `npm ci` e `npm test` em Windows e Linux a cada push na `main` e em cada pull request, com o Node da versão em `.nvmrc`. Log de diagnóstico: rode com `IDLEHUB_DEBUG=1` (o F12 abre o DevTools da interface).
 
-**Teste de fumaça**: `npm run fumaca` (ou `idlehub --teste-fumaca` no app instalado) abre a janela principal com dados numa pasta temporária e com a rede bloqueada, confere que a interface montou, abre **uma** tela de jogo apontada para uma página local de teste (`idlehub-fumaca://`, que só existe nesse modo; nenhum jogo é aberto) e fecha sozinho. Imprime `IDLEHUB_FUMACA_OK` e sai com código 0 se passou; `IDLEHUB_FUMACA_FALHOU` e código 1 se não. Ele não envia nada ao Discord e reprova se o sandbox do Chromium estiver desligado, se a janela principal ou a tela de jogo não estiverem em sandbox com `contextIsolation`, se a página da tela enxergar `require`/`process`, ou se o preload da tela não tiver resolvido o plugin, instalado o observador na página e entregado um evento da página ao processo principal. O CI roda esse teste no Ubuntu 24.04 sob tela virtual (`xvfb-run`), do código e do `.deb` instalado, e guarda uma captura da janela como artefato `fumaca-linux`.
+**Teste de fumaça**: `npm run fumaca` (ou `idlehub --teste-fumaca` no app instalado) abre a janela principal com dados numa pasta temporária e com a rede bloqueada, confere que a interface montou, abre **uma** tela de jogo apontada para uma página local de teste (`idlehub-fumaca://`, que só existe nesse modo; nenhum jogo é aberto) e fecha sozinho. Imprime `IDLEHUB_FUMACA_OK` e sai com código 0 se passou; `IDLEHUB_FUMACA_FALHOU` e código 1 se não. Ele não envia nada ao Discord e reprova se o sandbox do Chromium estiver desligado, se a janela principal ou a tela de jogo não estiverem em sandbox com `contextIsolation`, se a página da tela enxergar `require`/`process`, ou se o preload da tela não tiver resolvido o plugin, instalado o observador na página e entregado um evento da página ao processo principal. Depois ele testa o proxy com servidores locais de teste: um proxy `http` com senha (a tela precisa carregar por ele, com o WebRTC em `disable_non_proxied_udp`, e a senha não pode aparecer na saída nem no `config.json`), o "Testar proxy", um `socks5`, um proxy fora do ar e uma senha errada (a tela precisa ficar sem conexão nos dois casos) e, ao fim, confere que nenhuma tela saiu direto. O CI roda esse teste no Ubuntu 24.04 sob tela virtual (`xvfb-run`), do código e do `.deb` instalado, e guarda uma captura da janela como artefato `fumaca-linux`.
 
 ### Linux
 
@@ -41,7 +41,7 @@ Para deixar o IdleHub rodando num servidor sem tela e vê-lo de outro computador
 - **Abas**: cada aba tem 4 telas, e cada tela é uma sessão independente (login próprio). Use `+` para criar uma aba, clique duplo no nome para renomear e `×` para fechar.
 - **Telas**: `✎` muda o nome ou o endereço, `⟳` recarrega e `⤢` expande uma tela (clique de novo para voltar à grade).
 - **Eventos** (coluna da direita, `☰` mostra ou oculta): shinies e drops raros de todas as abas. Clicar num evento leva à tela da conta. Uma bolinha laranja na aba indica um evento novo numa aba escondida.
-- **Configurações** (`⚙`): URL do webhook do Discord, botões de teste, quais avisos enviar, intervalo do resumo automático e quais drops contam como raros.
+- **Configurações** (`⚙`): URL do webhook do Discord, botões de teste, quais avisos enviar, intervalo do resumo automático, [proxy](#proxy) e quais drops contam como raros.
 
 As telas escondidas continuam rodando normalmente.
 
@@ -50,6 +50,22 @@ As telas escondidas continuam rodando normalmente.
 - Detecta **shinies capturados** (inclusive os chocados de ovo) e **drops raros de boss e hunt** da própria conta.
 - O app só **lê** as mensagens que o servidor já envia ao jogo. Nada é enviado e a jogabilidade não muda.
 - ⚠️ Os termos do Pokeidle permitem **no máximo 4 contas por pessoa e aparelho**. Acima disso o banimento é permanente. O app mostra um aviso se houver mais de 4 telas do Pokeidle abertas. Cada amigo deve rodar o app no próprio PC. Se você também rodar o IdleHub num servidor, as contas de lá somam com as do seu PC: o aviso de cada app só conta as telas dele (veja [docs/servidor-linux.md](docs/servidor-linux.md)).
+
+## Proxy
+
+Em ⚙ Configurações › Proxy dá para fazer as telas de jogo saírem na internet por um proxy (por exemplo, um proxy residencial pago, quando o jogo bloqueia IP de datacenter). É **um proxy para o app todo**, não um por conta.
+
+- **Campos**: ligar/desligar, tipo (`http`, `https` ou `socks5`), host (nome ou IP, sem `http://` e sem usuário), porta e, opcionalmente, usuário e senha. `https` é TLS até o próprio proxy; use se o provedor oferecer.
+- **Onde vale**: todas as telas de jogo, de todas as abas, inclusive os popups de login (Discord/Google), que usam a sessão da própria tela. O proxy é aplicado na sessão **antes** de a tela carregar o jogo.
+- **Mudar com o app aberto**: ao salvar uma mudança no proxy, o app aplica a regra nova em todas as sessões, derruba as conexões abertas pela rota antiga e recarrega todas as telas. Não precisa reiniciar.
+- **Sem vazamento**: com o proxy ligado, a regra das sessões é só aquele proxy, sem conexão direta como alternativa. Se o proxy cair, recusar a senha ou estiver configurado errado, as telas ficam **sem conexão** (erro do Chromium ou uma página "sem conexão" do app); nunca saem pelo IP direto. O WebRTC das telas fica em `disable_non_proxied_udp` (sem UDP fora do proxy). No `socks5` o DNS também é resolvido pelo proxy. Só endereços da própria máquina (`localhost`, `127.0.0.1`) não passam pelo proxy.
+- **Usuário e senha**: no `http` e no `https` o app responde ao pedido de login do proxy (evento `login` do Electron), só para o host e a porta configurados e no máximo 5 vezes por minuto por tela, para senha errada não virar laço; nesse caso aparece um aviso no topo. **`socks5` com usuário e senha não funciona**: o Chromium não suporta autenticação em SOCKS5 ([net/docs/proxy.md](https://chromium.googlesource.com/chromium/src/+/HEAD/net/docs/proxy.md)), e a tela recusa salvar essa combinação. Use o endereço `http`/`https` do provedor ou libere o IP da máquina no painel dele e deixe usuário e senha vazios.
+- **Testar proxy**: usa o que está no formulário (antes de salvar), numa sessão temporária só do teste, e mostra o IP de saída visto por `ipinfo.io` (ou `api.ipify.org`, se o primeiro falhar), com cidade e provedor quando houver. Se der erro, mostra o motivo (proxy fora do ar, senha recusada, tempo esgotado...).
+- **O que sai direto, sem o proxy**: o webhook do Discord, a checagem de atualização (só Windows) e o download de extensões da Chrome Web Store. Motivos: esses serviços não bloqueiam IP de datacenter; o tráfego do proxy residencial é pago; os avisos no Discord continuam chegando se o proxy cair; e a URL do webhook, que é segredo, não passa por um terceiro. As extensões, depois de carregadas, rodam dentro das telas e usam o proxy delas.
+- **A senha**: nunca aparece de novo na tela (o campo fica vazio; deixar vazio mantém a salva, e há a opção "Apagar a senha salva"), nunca vai para logs, mensagens de erro ou Discord, e não fica no `config.json`. Ela fica em `proxy-senha.json` na [pasta de dados](#onde-ficam-os-dados), com permissão 600:
+  - Windows, macOS e Linux com chaveiro (GNOME Keyring/KWallet): criptografada pelo `safeStorage` do Electron (DPAPI, Keychain ou o chaveiro).
+  - Linux sem chaveiro (o servidor sem tela): o `safeStorage` cairia no modo `basic_text`, cuja chave é fixa no código do Chromium e não protege nada. Por isso o app guarda a senha só em base64, **que não é criptografia**: a proteção real é a permissão 600 na pasta pessoal do usuário que roda o app. A tela de configurações diz qual dos dois modos está em uso.
+- **Limite de 4 contas**: o proxy não muda nada nele. As contas continuam sendo suas, no mesmo aparelho, e o aviso de mais de 4 telas do Pokeidle continua igual.
 
 ## Extensões do Chrome
 
@@ -76,4 +92,4 @@ Sites sem plugin também funcionam nas telas, só que sem detecção de eventos.
 - Windows: `%APPDATA%\IdleHub\`
 - Linux: `~/.config/IdleHub/` (ou `$XDG_CONFIG_HOME/IdleHub/`, se essa variável estiver definida). No servidor do guia, `/home/idlehub/.config/IdleHub/`.
 
-Dentro dela: `config.json` (abas, telas e configurações), `events.json` (últimos 300 eventos), `Partitions\` (sessões e logins de cada tela) e `extensions\` (extensões baixadas da Chrome Web Store).
+Dentro dela: `config.json` (abas, telas e configurações, sem a senha do proxy), `proxy-senha.json` (senha do proxy, se houver; veja [Proxy](#proxy)), `events.json` (últimos 300 eventos), `Partitions\` (sessões e logins de cada tela) e `extensions\` (extensões baixadas da Chrome Web Store).
