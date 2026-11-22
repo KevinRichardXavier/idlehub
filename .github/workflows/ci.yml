@@ -116,7 +116,7 @@ jobs:
         env:
           IDLEHUB_FUMACA_CAPTURA: ${{ runner.temp }}/fumaca-codigo.png
         run: |
-          timeout 120 xvfb-run -a -s '-screen 0 1600x1000x24' npm run fumaca 2>&1 | tee "$RUNNER_TEMP/codigo.log"
+          timeout 180 xvfb-run -a -s '-screen 0 1600x1000x24' npm run fumaca 2>&1 | tee "$RUNNER_TEMP/codigo.log"
           grep -q '^IDLEHUB_FUMACA_OK ' "$RUNNER_TEMP/codigo.log"
 
       - name: Nenhum processo do Electron ficou para trás
@@ -139,7 +139,7 @@ jobs:
         env:
           IDLEHUB_FUMACA_CAPTURA: ${{ runner.temp }}/fumaca-deb.png
         run: |
-          timeout 120 xvfb-run -a -s '-screen 0 1600x1000x24' /opt/IdleHub/idlehub --teste-fumaca 2>&1 | tee "$RUNNER_TEMP/deb.log"
+          timeout 180 xvfb-run -a -s '-screen 0 1600x1000x24' /opt/IdleHub/idlehub --teste-fumaca 2>&1 | tee "$RUNNER_TEMP/deb.log"
           grep -q '^IDLEHUB_FUMACA_OK ' "$RUNNER_TEMP/deb.log"
           if pgrep -a -f '/opt/IdleHub/idlehub'; then
             echo "::error::Processos do IdleHub continuam rodando depois do teste."

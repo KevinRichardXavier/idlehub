@@ -16,12 +16,13 @@
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const requestGate = require('./request-gate');
 
 const FLAG = '--teste-fumaca';
-const TIMEOUT_MS = 60000;
+const TIMEOUT_MS = 110000;
+const PANEL_MS = 55000; // até a tela de jogo de teste ficar pronta; o resto do tempo é da parte do proxy
 const POLL_MS = 250;
 const RESULT_PREFIX = 'IDLEHUB_FUMACA';
-const BLOCKED_URLS = ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'];
 // Página local da tela de jogo de teste. O host é o de um jogo com plugin para o preload resolver o plugin
 // pelo endereço, como faz com o jogo de verdade; o conteúdo vem do próprio app, nunca da rede.
 const TEST_SCHEME = 'idlehub-fumaca';
@@ -102,7 +103,7 @@ function panelProblems(panel, expectedPlugin) {
 }
 
 // Decide se o teste passou. Retorna { ok, problems }.
-function verdict({ ui, expectedPanels, visible, blocked, sandboxOff, panel, expectedPlugin }) {
+function verdict({ ui, expectedPanels, visible, blocked, sandboxOff, panel, expectedPlugin, proxyProblems = [] }) {
   const problems = [];
   if (sandboxOff) problems.push('sandbox do Chromium desligado (--no-sandbox ou ELECTRON_DISABLE_SANDBOX)');
   if (!visible) problems.push('a janela principal não está visível');
@@ -113,6 +114,7 @@ function verdict({ ui, expectedPanels, visible, blocked, sandboxOff, panel, expe
   if (!ui || ui.contextIsolated !== true) problems.push('a janela principal não está com contextIsolation (process.contextIsolated)');
   if (!ui || ui.node !== false) problems.push('a página da janela principal enxerga require/process (nodeIntegration)');
   problems.push(...panelProblems(panel, expectedPlugin));
+  problems.push(...proxyProblems);
   if (blocked.length) problems.push(`tentou acessar a rede: ${blocked.slice(0, 5).join(', ')}`);
   return { ok: problems.length === 0, problems };
 }
@@ -132,14 +134,18 @@ function setup(app, plugin) {
   app.setPath('sessionData', dir);
 
   const blocked = [];
+  // Origens locais (127.0.0.1) liberadas pela parte do proxy (src/smoke-proxy.js); o resto continua bloqueado.
+  const allowed = [];
   globalThis.fetch = async (url) => {
     blocked.push(redactUrl(url));
     throw new Error('rede bloqueada no teste de fumaça');
   };
+  // Pelo request-gate: o bloqueio do proxy usa o mesmo ouvinte da sessão e não pode apagar este.
   const guard = (ses) =>
-    ses.webRequest.onBeforeRequest({ urls: BLOCKED_URLS }, (details, cb) => {
+    requestGate.setBlocker(ses, 'teste-de-fumaca', (details) => {
+      if (allowed.some((o) => details.url.startsWith(`${o}/`))) return false;
       blocked.push(redactUrl(details.url));
-      cb({ cancel: true });
+      return true;
     });
   app.on('session-created', (ses) => {
     guard(ses);
@@ -153,7 +159,7 @@ function setup(app, plugin) {
   app.whenReady().then(() => guard(require('electron').session.defaultSession));
 
   app.on('will-quit', () => fs.rmSync(dir, { recursive: true, force: true }));
-  return { dir, blocked, testUrl: testPageUrl(plugin), pluginId: plugin.id };
+  return { dir, blocked, allowed, testUrl: testPageUrl(plugin), pluginId: plugin.id };
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -210,7 +216,7 @@ async function capture(wc, file) {
   return `falhou: ${last}`;
 }
 
-async function run({ app, win, ctx, expectedPanels, testPanel }) {
+async function run({ app, win, ctx, expectedPanels, testPanel, proxyCheck = null }) {
   const started = Date.now();
   const report = (ok, extra) => {
     const line = `${RESULT_PREFIX}_${ok ? 'OK' : 'FALHOU'} ${JSON.stringify({ ms: Date.now() - started, ...extra })}`;
@@ -234,13 +240,18 @@ async function run({ app, win, ctx, expectedPanels, testPanel }) {
 
     let ui = null;
     let panel = null;
-    while (Date.now() - started < TIMEOUT_MS - 5000) {
+    while (Date.now() - started < PANEL_MS) {
       ui = await readUi(wc);
       panel = await readPanel(testPanel);
       const uiDone = ui && ui.tabs >= 1 && ui.panels === expectedPanels && ui.sandboxed !== undefined;
       if (uiDone && panelDone(panel, ctx.pluginId)) break;
       await sleep(POLL_MS);
     }
+
+    // Proxy de verdade (só depois da tela de teste pronta: ela é a tela usada).
+    let proxy = { problems: [], report: null };
+    if (proxyCheck && panelDone(panel, ctx.pluginId)) proxy = await proxyCheck();
+    else if (proxyCheck) proxy.problems = ['proxy: não testado porque a tela de jogo de teste não ficou pronta'];
 
     const shot = process.env.IDLEHUB_FUMACA_CAPTURA;
     const captura = shot ? await capture(wc, shot) : undefined;
@@ -253,11 +264,12 @@ async function run({ app, win, ctx, expectedPanels, testPanel }) {
       sandboxOff: sandboxDisabled() || app.commandLine.hasSwitch('no-sandbox'),
       panel,
       expectedPlugin: ctx.pluginId,
+      proxyProblems: proxy.problems,
     });
     clearTimeout(watchdog);
     if (!res.ok) return fail(res.problems);
     done = true;
-    report(true, { ui, tela: panel, captura, plataforma: `${process.platform}-${process.arch}`, electron: process.versions.electron });
+    report(true, { ui, tela: panel, proxy: proxy.report, captura, plataforma: `${process.platform}-${process.arch}`, electron: process.versions.electron });
     app.quit(); // caminho normal de saída (before-quit salva os arquivos); código 0
   } catch (err) {
     clearTimeout(watchdog);

@@ -15,6 +15,11 @@ contextBridge.exposeInMainWorld('hub', {
   reloadPanel: (panelId) => ipcRenderer.send('panel:reload', panelId),
   testDiscord: (url) => ipcRenderer.invoke('discord:test', url),
   summaryNow: () => ipcRenderer.invoke('discord:summaryNow'),
+  // Proxy: a senha vai para o processo principal e nunca volta (proxyInfo só diz se existe senha salva).
+  saveProxy: (input) => ipcRenderer.invoke('proxy:save', input),
+  testProxy: (input) => ipcRenderer.invoke('proxy:test', input),
+  proxyInfo: () => ipcRenderer.invoke('proxy:info'),
+  onProxy: on('proxy:update'),
   clearEvents: () => ipcRenderer.invoke('events:clear'),
   onEvent: on('events:new'),
   onEventUpdate: on('events:update'),

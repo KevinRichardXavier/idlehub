@@ -25,15 +25,22 @@ O que vai ficar montado:
 ## Antes de começar: aviso honesto sobre o Pokeidle
 
 - **O limite de 4 contas soma o servidor e o seu PC.** Os termos do Pokeidle permitem no máximo
-  **4 contas por pessoa e aparelho**, com banimento permanente acima disso. As contas que você abrir no
+  **4 contas por pessoa, somando todas as redes e aparelhos**, com banimento permanente acima disso. As contas que você abrir no
   servidor e as que você usa no PC são todas suas, então contam juntas. Se o PC já tem 4 contas, o servidor
   não pode ter nenhuma conta do Pokeidle. O aviso do app conta só as telas **daquele** app: o IdleHub do
   servidor não enxerga o do PC, e vice-versa. Conferir a soma é com você.
+- **O Pokeidle também limita por rede.** Pela seção 5 ("Multicontas") dos [termos](https://pokeidle.io/terms)
+  (versão de 2026-10-12, revisão de 2026-11-18, lidos em português em 22/11/2026), cada rede pode ter no
+  máximo **4 contas criadas e 4 contas conectadas ao mesmo tempo**. O texto diz: "Redes compartilhadas — lan
+  house, escola, empresa — seguem o mesmo limite: desde 16/11/2026, a equipe não aceita mais pedidos de
+  liberação de rede." A seção 8 da mesma versão ainda cita redes "liberadas pela moderação"; na dúvida,
+  confirme com o suporte do jogo. Contas usadas para contornar o limite por rede podem ser banidas, e a detecção usa a rede
+  e o aparelho. O jogo também pode banir redes que considere abusivas.
 - **O IP do servidor é de datacenter.** Para o jogo, o servidor sai na internet com um endereço de
-  hospedagem, diferente do IP da sua casa. Sites e proteções como o Cloudflare costumam desconfiar mais
-  desse tipo de IP (desafios, captchas, bloqueios), e a mesma conta aparecendo de dois IPs diferentes pode
-  chamar atenção. Não sabemos como o Pokeidle trata isso: as regras que conferimos falam do limite de contas,
-  não de IP. Na dúvida, pergunte ao jogo antes de mover contas para o servidor.
+  hospedagem, diferente do IP da sua casa, e o Pokeidle pode bloquear esse tipo de rede. O app tem um proxy
+  opcional, desligado por padrão (veja [Proxy residencial (pela tela)](#proxy-residencial-pela-tela)), mas
+  proxy não é jeito de contornar bloqueio nem limite do jogo: os limites acima continuam valendo.
+- **Cabe a você confirmar com o suporte do jogo antes de conectar contas por proxy.**
 
 ---
 
@@ -248,6 +255,31 @@ contém a URL do webhook do Discord, que é segredo. Se quiser tirar também o `
 antes se nada mais no servidor usa esses pacotes.
 
 ---
+
+## Proxy residencial (pela tela)
+
+Para as telas de jogo saírem por um proxy em vez do IP do servidor, configure tudo pela tela do app, no
+VNC (passo 6). Não precisa de sudo nem de reiniciar o serviço. Antes de conectar contas por proxy, confirme
+com o suporte do jogo: cabe a quem usa.
+
+1. Abra ⚙ Configurações › Proxy e marque **Usar proxy nas telas de jogo**.
+2. Escolha o tipo e preencha host e porta do provedor. Com usuário e senha, use o endereço `http` ou `https`
+   do provedor: **`socks5` com senha não funciona** no Chromium. Para `socks5`, libere o IP do servidor no
+   painel do provedor e deixe usuário e senha vazios.
+3. Clique em **Testar proxy**. Deve aparecer o IP de saída pelo proxy, diferente do IP do servidor.
+4. Clique em **Salvar**. Todas as telas recarregam já pelo proxy.
+
+- Se o proxy cair, as telas ficam sem conexão (não saem pelo IP do servidor). Os avisos no Discord continuam,
+  porque ele sai direto.
+- Aqui não há chaveiro, então a senha fica em `/home/idlehub/.config/IdleHub/proxy-senha.json`, com
+  permissão 600, em base64 (**não é criptografia**). Quem tem root no servidor consegue lê-la. Detalhes no
+  [README](../README.md#proxy).
+- Os limites do Pokeidle continuam os mesmos com ou sem proxy: 4 contas por pessoa (servidor e PC somados)
+  e 4 contas conectadas por rede. Todas as telas saem pelo mesmo proxy, que conta como uma rede; o app não
+  tem proxy por conta, de propósito.
+- Prefira um IP fixo (sessão "sticky" ou IP estático/ISP), de preferência dedicado. Proxy residencial
+  rotativo troca de IP o tempo todo e costuma ser compartilhado com outros clientes do provedor, cujas contas
+  podem somar no limite por rede daquele IP.
 
 ## Problemas comuns
 
